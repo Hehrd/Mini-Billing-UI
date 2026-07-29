@@ -1,0 +1,311 @@
+module:
+  name: mini_billing_backend
+  description: Spring Boot backend service for secured billing workflows.
+  responsibility: Expose REST APIs, authenticate users with JWT, import billing files, calculate and persist invoices, manage Billing Runs, expose reports, and record audit and error data.
+  technology_stack: Java 21
+  frameworks:
+    - Spring Boot 3.3.7
+    - Spring Web
+    - Spring Data JPA
+    - Hibernate
+    - Spring Security
+    - Jakarta Validation
+    - Spring Scheduling
+  libraries:
+    - org.postgresql:postgresql
+    - org.apache.commons:commons-csv:1.12.0
+    - org.apache.poi:poi-ooxml:5.3.0
+    - commons-io:commons-io:2.18.0
+    - io.jsonwebtoken:jjwt-api:0.12.6
+    - io.jsonwebtoken:jjwt-impl:0.12.6
+    - io.jsonwebtoken:jjwt-jackson:0.12.6
+    - org.projectlombok:lombok:1.18.46
+  dependencies:
+    internal_contracts:
+      - Product
+      - ImportType
+      - UserRole
+      - BillingRunStatus
+      - ErrorSeverity
+      - ErrorStatus
+      - PageResponse
+      - BillingResponse
+    external_systems:
+      - PostgreSQL database
+  consumed_contracts:
+    - LoginRequest
+    - RegisterUserRequest
+    - FileImportRequest
+    - BillingRequest
+    - BillingRunRequest
+  exposed_contracts:
+    - LoginResponse
+    - UserResponse
+    - BillingResponse
+    - InvoiceResponse
+    - BillingRunResponse
+    - BillingReportResponse
+    - AuditLogResponse
+    - BillingErrorLogResponse
+
+communication_relationships:
+  - direction: mini_billing_frontend -> mini_billing_backend
+    protocol: HTTP JSON and multipart/form-data
+    data_flow: Frontend sends login, import, billing generation, and invoice lookup requests.
+    contracts_used:
+      - LoginRequest
+      - LoginResponse
+      - FileImportRequest
+      - BillingRequest
+      - BillingResponse
+      - InvoiceResponse
+  - direction: mini_billing_backend -> PostgreSQL database
+    protocol: JDBC
+    data_flow: Spring Data repositories persist and query module-owned entities.
+    contracts_used:
+      - JPA entity mappings
+
+apis:
+  exposed:
+    - method: POST
+      path: /api/auth/login
+      authentication: public
+      request_contract: LoginRequest
+      response_contract: LoginResponse
+      validation_summary: username and password are nonblank.
+      ownership_rule: Authenticates by User.username.
+      side_effects: Records LOGIN audit log on successful authentication.
+
+    - method: POST
+      path: /api/admin/users
+      authentication: JWT bearer token with ADMIN role
+      request_contract: RegisterUserRequest
+      response_contract: UserResponse
+      validation_summary: name, reference, username, password, and role are required; priceListNumber must not be negative.
+      ownership_rule: ADMIN creates users; username and reference must be unique.
+      side_effects: Persists User and records REGISTER_USER audit log.
+
+    - method: POST
+      path: /api/file/import
+      authentication: JWT bearer token with ADMIN role
+      request_contract: FileImportRequest multipart form
+      response_contract: empty body
+      validation_summary: type and uploadedBy are required; fileImports must be nonempty.
+      ownership_rule: uploadedBy is resolved by User.reference.
+      side_effects: Persists FileImport and parsed Users, Readings, or Prices; records audit logs and error logs.
+
+    - method: POST
+      path: /api/billing/generate
+      authentication: JWT bearer token with USER or ADMIN role
+      request_contract: BillingRequest multipart form
+      response_contract: BillingResponse
+      validation_summary: periodStart and periodEnd match yy-MM, userId is nonblank, usersCsv is required.
+      ownership_rule: USER may generate for its own reference; ADMIN may generate for any reference.
+      side_effects: Persists Invoice and Lines, marks included Readings as invoiced, records audit and error logs.
+
+    - method: GET
+      path: /api/billing/invoices/{userId}
+      authentication: JWT bearer token with USER or ADMIN role
+      request_contract: path userId and Spring Pageable query parameters
+      response_contract: PageResponse<InvoiceResponse>
+      validation_summary: userId path value is required.
+      ownership_rule: USER may access only its own reference; ADMIN may access any reference.
+      side_effects: none
+
+    - method: GET
+      path: /api/billing/invoices
+      authentication: JWT bearer token with USER or ADMIN role
+      request_contract: optional userId and Spring Pageable query parameters
+      response_contract: PageResponse<InvoiceResponse>
+      validation_summary: Spring Pageable query parameters are accepted.
+      ownership_rule: USER receives only its own invoices; ADMIN receives all invoices or a filtered user's invoices.
+      side_effects: none
+
+    - method: POST
+      path: /api/billing/runs
+      authentication: JWT bearer token with ADMIN role
+      request_contract: BillingRunRequest
+      response_contract: BillingRunResponse
+      validation_summary: periodStart and periodEnd match yy-MM.
+      ownership_rule: ADMIN starts Billing Runs.
+      side_effects: Persists BillingRun, generates invoices for users, records processed/failed counts, audit logs, and error logs.
+
+    - method: POST
+      path: /api/billing/runs/{runId}/stop
+      authentication: JWT bearer token with ADMIN role
+      request_contract: path runId
+      response_contract: BillingRunResponse
+      validation_summary: runId is required.
+      ownership_rule: ADMIN stops Billing Runs.
+      side_effects: Updates BillingRun status to PAUSED and records audit log.
+
+    - method: POST
+      path: /api/billing/runs/{runId}/resume
+      authentication: JWT bearer token with ADMIN role
+      request_contract: path runId
+      response_contract: BillingRunResponse
+      validation_summary: runId is required.
+      ownership_rule: ADMIN resumes Billing Runs.
+      side_effects: Updates BillingRun status to IN_PROGRESS and records audit log.
+
+    - method: GET
+      path: /api/billing/runs/{runId}
+      authentication: JWT bearer token with ADMIN role
+      request_contract: path runId
+      response_contract: BillingRunResponse
+      validation_summary: runId is required.
+      ownership_rule: ADMIN reads Billing Runs.
+      side_effects: none
+
+    - method: GET
+      path: /api/billing/runs
+      authentication: JWT bearer token with ADMIN role
+      request_contract: Spring Pageable query parameters
+      response_contract: PageResponse<BillingRunResponse>
+      validation_summary: Spring Pageable query parameters are accepted.
+      ownership_rule: ADMIN reads Billing Runs.
+      side_effects: none
+
+    - method: GET
+      path: /api/reports/billing-runs/{runId}
+      authentication: JWT bearer token with ADMIN role
+      request_contract: path runId
+      response_contract: BillingReportResponse
+      validation_summary: runId is required.
+      ownership_rule: ADMIN reads reports.
+      side_effects: none
+
+    - method: GET
+      path: /api/audit/logs
+      authentication: JWT bearer token with ADMIN role
+      request_contract: Spring Pageable query parameters
+      response_contract: PageResponse<AuditLogResponse>
+      validation_summary: Spring Pageable query parameters are accepted.
+      ownership_rule: ADMIN reads audit logs.
+      side_effects: none
+
+    - method: GET
+      path: /api/audit/errors
+      authentication: JWT bearer token with ADMIN role
+      request_contract: Spring Pageable query parameters
+      response_contract: PageResponse<BillingErrorLogResponse>
+      validation_summary: Spring Pageable query parameters are accepted.
+      ownership_rule: ADMIN reads error logs.
+      side_effects: none
+
+  consumed:
+    - name: PostgreSQL JDBC datasource
+      protocol: JDBC
+      configuration_source: src/main/resources/application.yml
+
+implementation_layers:
+  presentation:
+    controllers:
+      - AuthController
+      - AdminUserController
+      - FileImportController
+      - BillingController
+      - ReportController
+      - AuditController
+    request_dtos:
+      - LoginRequest
+      - RegisterUserRequest
+      - FileImportRequest
+      - BillingRequest
+      - BillingRunRequest
+    response_dtos:
+      - LoginResponse
+      - UserResponse
+      - BillingResponse
+      - InvoiceResponse
+      - InvoiceLineResponse
+      - BillingRunResponse
+      - BillingReportResponse
+      - AuditLogResponse
+      - BillingErrorLogResponse
+      - PageResponse
+    validation:
+      - Bean Validation on request DTOs and controller multipart parts.
+      - BillingInputValidator for request, file, and parsed data rules.
+    error_mapping:
+      - GlobalExceptionHandler maps BillingValidationException, CsvParsingException, InvoiceCalculationException, PriceResolutionException, BillingFileException, missing request parts, constraint violations, and BadCredentialsException into BillingResponse errors.
+
+  business_logic:
+    services:
+      - AuthenticationService
+      - JwtService
+      - UserAdministrationService
+      - FileImportService
+      - CsvParsingService
+      - BillingService
+      - BillingRunService
+      - InvoiceCalculatorService
+      - AuditService
+      - BillingErrorLogService
+    use_cases:
+      - Authenticate username and password and issue JWT.
+      - Register users with USER or ADMIN role.
+      - Import USERS, READINGS, and PRICES files from CSV or XLSX.
+      - Generate an invoice for one user and billing period.
+      - Wrap invoice generation in Billing Run lifecycle operations.
+      - Generate Billing Run reports.
+      - Read audit and error logs.
+    domain_rules:
+      - Proportional quantity distribution uses Europe/Sofia calendar-day-inclusive price validity.
+      - Generated invoice lines are ordered by product and price period.
+      - Readings included in a generated invoice are marked invoiced.
+      - Billing Run status values are NOT_STARTED, IN_PROGRESS, PAUSED, COMPLETED, and FAILED.
+      - Structured errors include error id, type, description, optional customer id, module, severity, and status.
+    transaction_boundaries:
+      - FileImportService.importFile is transactional.
+      - BillingService.generate and generateInvoice are transactional.
+      - BillingRunService stop, resume, get, list, and report use service-layer transactions; start persists run state around invoice generation.
+      - AuditService.record is transactional.
+      - BillingErrorLogService.record and purgeOlderThan30Days are transactional.
+    module_events:
+      - No asynchronous module events are implemented.
+
+  persistence:
+    entities:
+      - User
+      - Reading
+      - Price
+      - Line
+      - Invoice
+      - FileImport
+      - BillingRun
+      - AuditLog
+      - BillingErrorLog
+    repositories:
+      - UserRepository
+      - ReadingRepository
+      - PriceRepository
+      - LineRepository
+      - InvoiceRepository
+      - FileImportRepository
+      - BillingRunRepository
+      - AuditLogRepository
+      - BillingErrorLogRepository
+    migrations:
+      - Hibernate ddl-auto update is configured.
+    indexes:
+      - User.reference is unique.
+      - User.username is unique.
+      - Invoice.number is unique.
+    constraints:
+      - Required entity fields use JPA nullable=false where existing data migration allows it.
+      - Many-to-one relationships enforce ownership links for readings, invoices, file imports, and billing runs.
+
+implementation_notes:
+  - SecurityConfig configures stateless JWT authentication and role-based endpoint authorization.
+  - JwtAuthenticationFilter reads Authorization bearer tokens and creates Spring Security authentication from JWT claims.
+  - DataInitializer seeds admin/admin when username admin does not exist.
+  - CsvParsingService supports CSV and XLSX through Apache Commons CSV and Apache POI.
+  - BillingController owns invoice generation, invoice lookup, and Billing Run endpoints.
+  - BillingRunController does not exist; Billing Run routes are part of BillingController.
+  - BillingErrorLogService persists error rows, appends error.log, and schedules deletion of error rows older than 30 days.
+
+unfinished_notes:
+  - Invoice PDF generation and download are not implemented.
+  - Billing Run resume does not continue from persisted per-user cursor state.
+  - Explicit migrations are not implemented.

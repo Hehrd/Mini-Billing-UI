@@ -1,0 +1,236 @@
+project:
+  name: MiniBilling
+  description: >
+    Mini billing application with a Spring Boot backend and React/Vite frontend. The backend accepts
+    CSV or XLSX user, reading, and price imports, calculates invoices with proportional measurement
+    distribution across price periods, persists billing data in PostgreSQL through JPA, records
+    Billing Run, audit, and error-log data, and protects APIs with JWT bearer authentication.
+  root: /Users/alexander/IdeaProjects/MiniBilling
+
+schema_artifacts:
+  directory: project schema/
+  files:
+    - contracts.yaml
+    - project_schema.yaml
+    - mini_billing_backend_schema.yaml
+    - mini_billing_frontend_schema.yaml
+  obsolete_root_schema_removed: true
+
+modules:
+  - name: mini_billing_backend
+    type: backend_service
+    deployable_boundary: Spring Boot application
+    schema: mini_billing_backend_schema.yaml
+    responsibility: Expose secured REST APIs, execute billing workflows, persist data, and integrate with PostgreSQL.
+    technology_stack: Java 21
+    frameworks:
+      - Spring Boot 3.3.7
+      - Spring Web
+      - Spring Data JPA
+      - Hibernate
+      - Spring Security
+      - Jakarta Validation
+      - Spring Scheduling
+    libraries:
+      - PostgreSQL JDBC driver
+      - Apache Commons CSV 1.12.0
+      - Apache POI 5.3.0
+      - JJWT 0.12.6
+      - Lombok 1.18.46
+
+  - name: mini_billing_frontend
+    type: frontend_client
+    deployable_boundary: Vite React application
+    schema: mini_billing_frontend_schema.yaml
+    responsibility: Provide browser UI for file imports, invoice generation, billing results, and invoice lookup.
+    technology_stack: JavaScript ES modules
+    frameworks:
+      - React 18.3.1
+      - Vite 5.4.11
+    libraries:
+      - react-dom 18.3.1
+      - "@vitejs/plugin-react 4.3.4"
+
+module_endpoints:
+  mini_billing_backend:
+    auth:
+      - method: POST
+        path: /api/auth/login
+        authentication: public
+        request_contract: LoginRequest
+        response_contract: LoginResponse
+    admin_users:
+      - method: POST
+        path: /api/admin/users
+        authentication: JWT bearer token with ADMIN role
+        request_contract: RegisterUserRequest
+        response_contract: UserResponse
+    file_imports:
+      - method: POST
+        path: /api/file/import
+        authentication: JWT bearer token with ADMIN role
+        request_contract: FileImportRequest multipart form with fileImports
+        response_contract: empty body
+    billing:
+      - method: POST
+        path: /api/billing/generate
+        authentication: JWT bearer token with USER or ADMIN role
+        request_contract: BillingRequest multipart form
+        response_contract: BillingResponse
+      - method: GET
+        path: /api/billing/invoices/{userId}
+        authentication: JWT bearer token with USER or ADMIN role
+        request_contract: path userId and Spring Pageable query parameters
+        response_contract: PageResponse<InvoiceResponse>
+      - method: GET
+        path: /api/billing/invoices
+        authentication: JWT bearer token with USER or ADMIN role
+        request_contract: optional userId and Spring Pageable query parameters
+        response_contract: PageResponse<InvoiceResponse>
+      - method: POST
+        path: /api/billing/runs
+        authentication: JWT bearer token with ADMIN role
+        request_contract: BillingRunRequest
+        response_contract: BillingRunResponse
+      - method: POST
+        path: /api/billing/runs/{runId}/stop
+        authentication: JWT bearer token with ADMIN role
+        request_contract: path runId
+        response_contract: BillingRunResponse
+      - method: POST
+        path: /api/billing/runs/{runId}/resume
+        authentication: JWT bearer token with ADMIN role
+        request_contract: path runId
+        response_contract: BillingRunResponse
+      - method: GET
+        path: /api/billing/runs/{runId}
+        authentication: JWT bearer token with ADMIN role
+        request_contract: path runId
+        response_contract: BillingRunResponse
+      - method: GET
+        path: /api/billing/runs
+        authentication: JWT bearer token with ADMIN role
+        request_contract: Spring Pageable query parameters
+        response_contract: PageResponse<BillingRunResponse>
+    reports:
+      - method: GET
+        path: /api/reports/billing-runs/{runId}
+        authentication: JWT bearer token with ADMIN role
+        request_contract: path runId
+        response_contract: BillingReportResponse
+    audit:
+      - method: GET
+        path: /api/audit/logs
+        authentication: JWT bearer token with ADMIN role
+        request_contract: Spring Pageable query parameters
+        response_contract: PageResponse<AuditLogResponse>
+      - method: GET
+        path: /api/audit/errors
+        authentication: JWT bearer token with ADMIN role
+        request_contract: Spring Pageable query parameters
+        response_contract: PageResponse<BillingErrorLogResponse>
+
+  mini_billing_frontend:
+    browser_routes:
+      - path: /
+        responsibility: Render the current Mini Billing workspace UI.
+
+module_communication:
+  - source_module: mini_billing_frontend
+    target_module: mini_billing_backend
+    protocol: HTTP JSON and multipart/form-data
+    contracts_used:
+      - LoginRequest
+      - LoginResponse
+      - FileImportRequest
+      - BillingRequest
+      - BillingResponse
+      - PageResponse<InvoiceResponse>
+    data_flow: Frontend submits file imports, invoice generation requests, and invoice lookup requests to backend REST endpoints.
+
+  - source_module: mini_billing_backend
+    target_module: PostgreSQL database
+    protocol: JDBC through Spring Data JPA and Hibernate
+    contracts_used:
+      - JPA entity mappings owned by mini_billing_backend
+    data_flow: Backend repositories persist and query users, readings, prices, file imports, invoices, lines, billing runs, audit logs, and error logs.
+
+storage:
+  - name: PostgreSQL database
+    owner_module: mini_billing_backend
+    technology: PostgreSQL
+    access_frameworks:
+      - Spring Data JPA
+      - Hibernate
+    configuration:
+      - Datasource URL, username, and password are read from application.yml environment placeholders.
+      - Hibernate ddl-auto is update.
+    owned_entities:
+      - User
+      - Reading
+      - Price
+      - Line
+      - Invoice
+      - FileImport
+      - BillingRun
+      - AuditLog
+      - BillingErrorLog
+
+infrastructure:
+  - name: Spring Boot runtime
+    owner_module: mini_billing_backend
+    responsibilities:
+      - Dependency injection
+      - Embedded HTTP server dispatch
+      - Transaction management
+      - Security filter chain
+      - Scheduled retention task execution
+  - name: Vite development runtime
+    owner_module: mini_billing_frontend
+    responsibilities:
+      - React development server
+      - Frontend production build
+
+security:
+  authentication:
+    owner_module: mini_billing_backend
+    mechanism: JWT bearer token
+    login_endpoint: POST /api/auth/login
+    token_claims:
+      - subject=username
+      - role=UserRole
+      - reference=User.reference
+    default_seed_user:
+      username: admin
+      password: admin
+      role: ADMIN
+  authorization:
+    - ADMIN role is required for /api/admin/**, /api/file/**, /api/billing/runs/**, /api/reports/**, and /api/audit/**.
+    - USER or ADMIN role is required for /api/billing/generate and invoice lookup endpoints.
+    - USER invoice lookup is constrained to the authenticated user's User.reference.
+
+unfinished_notes:
+  - The React/Vite frontend API client does not yet implement JWT login or Authorization header handling, while backend endpoints now require JWT except POST /api/auth/login.
+  - Invoice PDF generation and download endpoints are not implemented.
+  - Database migrations are not implemented; Hibernate ddl-auto update is the current schema management mechanism.
+  - Billing Run resume sets status back to IN_PROGRESS but does not continue from a persisted per-record cursor.
+
+architecture_warnings:
+  - Invoice number generation uses invoiceRepository.count(), which is not safe under concurrent invoice generation.
+  - BillingRunService.start iterates users synchronously and invokes invoice generation for each user; large data volumes may need batching or asynchronous execution.
+  - USER records created by legacy CSV import receive default username and password values derived from the User constructor, which is not a production account-provisioning policy.
+  - The frontend and backend security contracts are currently out of sync because the frontend has not been updated for JWT.
+
+recommended_improvements:
+  - Replace count-based invoice numbering with a database sequence or locked document-number allocator.
+  - Add explicit Flyway or Liquibase migrations for production schema evolution.
+  - Update the frontend to perform JWT login, store token state, and send Authorization bearer headers.
+  - Add PDF invoice generation and authorized download endpoints.
+  - Add Billing Run cursoring or job execution if stop/resume must interrupt and continue long-running processing.
+
+implementation_order:
+  - Update frontend JWT login and Authorization header handling.
+  - Replace invoice number generation with a transactionally safe sequence.
+  - Add explicit database migrations for all current JPA entities.
+  - Implement PDF invoice generation and download.
+  - Add resilient Billing Run execution with resumable per-record progress.
