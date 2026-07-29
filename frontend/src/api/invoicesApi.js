@@ -4,12 +4,13 @@ async function request(path, options = {}) {
   let response
   const method = options.method || 'GET'
   const requestedAt = new Date().toISOString()
+  const isFormData = options.body instanceof FormData
 
   try {
     response = await fetch(`${API_BASE_URL}${path}`, {
       headers: {
         Accept: 'application/json',
-        ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+        ...(options.body && !isFormData ? { 'Content-Type': 'application/json' } : {}),
         ...options.headers,
       },
       ...options,
@@ -90,8 +91,22 @@ function createApiError({ title, description, kind, status, method, path, reques
   return error
 }
 
-export function importCsvFiles() {
-  return request('/api/import', { method: 'POST' })
+export function importSourceFile({ sourceType, file, year, month }) {
+  const formData = new FormData()
+  formData.append('files', file)
+  formData.append('sourceType', sourceType)
+
+  if (year) {
+    formData.append('periodYear', String(year))
+  }
+  if (month) {
+    formData.append('periodMonth', String(month))
+  }
+
+  return request('/api/import', {
+    method: 'POST',
+    body: formData,
+  })
 }
 
 export function getHealth() {
@@ -116,6 +131,40 @@ export function generateInvoices(year, month) {
     method: 'POST',
     body: JSON.stringify({ year: Number(year), month: Number(month) }),
   })
+}
+
+export function startBillingRun(year, month) {
+  return request('/api/billing/runs', {
+    method: 'POST',
+    body: JSON.stringify(toBillingRunRequest(year, month)),
+  })
+}
+
+export function stopBillingRun(runId) {
+  return request(`/api/billing/runs/${encodeURIComponent(runId)}/stop`, { method: 'POST' })
+}
+
+export function resumeBillingRun(runId) {
+  return request(`/api/billing/runs/${encodeURIComponent(runId)}/resume`, { method: 'POST' })
+}
+
+export function restartBillingRun(runId) {
+  return request(`/api/billing/runs/${encodeURIComponent(runId)}/restart`, { method: 'POST' })
+}
+
+export function getBillingRun(runId) {
+  return request(`/api/billing/runs/${encodeURIComponent(runId)}`)
+}
+
+function toBillingRunRequest(year, month) {
+  const shortYear = String(Number(year) % 100).padStart(2, '0')
+  const paddedMonth = String(Number(month)).padStart(2, '0')
+  const period = `${shortYear}-${paddedMonth}`
+
+  return {
+    periodStart: period,
+    periodEnd: period,
+  }
 }
 
 export function getInvoice(documentNumber) {

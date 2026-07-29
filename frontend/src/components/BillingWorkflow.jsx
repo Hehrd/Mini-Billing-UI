@@ -6,8 +6,11 @@ function BillingWorkflow({
   importSummary,
   importStatus,
   importError,
+  importStatuses,
+  validationResults,
   generateStatus,
   generateError,
+  billingRun,
   isImporting,
   isGenerating,
   selectedPeriod,
@@ -17,8 +20,9 @@ function BillingWorkflow({
   year,
   isBackendAvailable,
   invoicesCount,
+  importReadiness,
   onImport,
-  onGenerate,
+  onBillingRunAction,
   onMonthChange,
   onYearChange,
   onPreviousPeriod,
@@ -26,7 +30,7 @@ function BillingWorkflow({
   onDismissImport,
   onDismissGenerate,
 }) {
-  const hasImportedData = Boolean(importSummary)
+  const hasImportedData = Boolean(importReadiness?.isReady)
   const hasInvoices = invoicesCount > 0
   const steps = [
     getStepState('Import source data', {
@@ -73,6 +77,8 @@ function BillingWorkflow({
           summary={importSummary}
           status={importStatus}
           error={importError}
+          importStatuses={importStatuses}
+          validationResults={validationResults}
           isLoading={isImporting}
           isBackendAvailable={isBackendAvailable}
           onImport={onImport}
@@ -86,16 +92,18 @@ function BillingWorkflow({
           year={year}
           selectedPeriod={selectedPeriod}
           hasImportedData={hasImportedData}
+          importReadiness={importReadiness}
           hasInvoices={hasInvoices}
           status={generateStatus}
           error={generateError}
+          billingRun={billingRun}
           isLoading={isGenerating}
           isBackendAvailable={isBackendAvailable}
           onMonthChange={onMonthChange}
           onYearChange={onYearChange}
           onPreviousPeriod={onPreviousPeriod}
           onNextPeriod={onNextPeriod}
-          onGenerate={onGenerate}
+          onBillingRunAction={onBillingRunAction}
           onDismiss={onDismissGenerate}
         />
       </div>
