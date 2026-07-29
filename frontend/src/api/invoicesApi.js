@@ -1,4 +1,39 @@
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:6969').replace(/\/$/, '')
+const AUTH_STORAGE_KEY = 'mini-billing-auth'
+
+let accessToken = readStoredAuth()?.token || null
+
+export function setAccessToken(token) {
+  accessToken = token || null
+}
+
+export function readStoredAuth() {
+  if (typeof window === 'undefined') {
+    return null
+  }
+
+  try {
+    return JSON.parse(window.localStorage.getItem(AUTH_STORAGE_KEY))
+  } catch {
+    return null
+  }
+}
+
+export function storeAuthSession(session) {
+  if (typeof window === 'undefined') {
+    return
+  }
+  window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(session))
+  setAccessToken(session?.token)
+}
+
+export function clearAuthSession() {
+  if (typeof window === 'undefined') {
+    return
+  }
+  window.localStorage.removeItem(AUTH_STORAGE_KEY)
+  setAccessToken(null)
+}
 
 async function request(path, options = {}) {
   let response
@@ -9,6 +44,7 @@ async function request(path, options = {}) {
     response = await fetch(`${API_BASE_URL}${path}`, {
       headers: {
         Accept: 'application/json',
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
         ...(options.body ? { 'Content-Type': 'application/json' } : {}),
         ...options.headers,
       },
@@ -66,6 +102,12 @@ function toErrorTitle(status, data = {}) {
   if (status === 404) {
     return data.title || 'Resource not found'
   }
+  if (status === 401) {
+    return data.title || 'Authentication required'
+  }
+  if (status === 403) {
+    return data.title || 'Access denied'
+  }
   if (status >= 500) {
     return 'Backend error'
   }
@@ -88,6 +130,21 @@ function createApiError({ title, description, kind, status, method, path, reques
     reason,
   }
   return error
+}
+
+export async function login({ username, password }) {
+  const response = await request('/api/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ username, password }),
+  })
+
+  return {
+    token: response.token,
+    tokenType: response.tokenType || 'Bearer',
+    username: response.username,
+    role: response.role,
+    reference: response.reference,
+  }
 }
 
 export function importCsvFiles() {
@@ -127,7 +184,10 @@ export async function downloadInvoice(documentNumber) {
 
   try {
     response = await fetch(`${API_BASE_URL}/api/invoices/${encodeURIComponent(documentNumber)}/download`, {
-      headers: { Accept: 'application/json' },
+      headers: {
+        Accept: 'application/json',
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+      },
     })
   } catch {
     throw createApiError({

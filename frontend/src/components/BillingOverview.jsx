@@ -8,6 +8,7 @@ function BillingOverview({
   invoicesCount,
   isImporting,
   isGenerating,
+  canImport,
   onImport,
   onGenerate,
 }) {
@@ -29,7 +30,7 @@ function BillingOverview({
         </div>
 
         <div className="overview-actions">
-          <Button type="button" onClick={onImport} disabled={!backendReady || isImporting}>
+          <Button type="button" onClick={onImport} disabled={!backendReady || isImporting || !canImport}>
             {isImporting ? 'Importing' : imported ? 'Re-import CSV files' : 'Import CSV files'}
           </Button>
           <Button

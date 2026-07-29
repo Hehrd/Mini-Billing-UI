@@ -4,7 +4,9 @@ import Button from './ui/Button.jsx'
 import Card from './ui/Card.jsx'
 import ErrorAlert from './ui/ErrorAlert.jsx'
 
-function ImportCard({ inputDirectory, summary, status, error, isLoading, isBackendAvailable, onImport, onDismiss }) {
+function ImportCard({ inputDirectory, summary, status, error, isLoading, isBackendAvailable, canImport, onImport, onDismiss }) {
+  const isLocked = !canImport
+
   return (
     <Card className="workflow-card import-card">
       <div className="card-header">
@@ -27,9 +29,15 @@ function ImportCard({ inputDirectory, summary, status, error, isLoading, isBacke
         </ul>
       </div>
 
-      <Button type="button" onClick={onImport} disabled={isLoading || !isBackendAvailable}>
-        {isLoading ? <LoadingSpinner label="Importing source data" /> : 'Import CSV Files'}
+      <Button type="button" onClick={onImport} disabled={isLoading || !isBackendAvailable || isLocked}>
+        {isLoading ? <LoadingSpinner label="Importing source data" /> : isLocked ? 'ADMIN required' : 'Import CSV Files'}
       </Button>
+
+      {isLocked && (
+        <Alert type="info" title="Role guard">
+          CSV imports are limited to ADMIN users by the backend authorization rules.
+        </Alert>
+      )}
 
       {isLoading && (
         <div className="progress-note" role="status">
