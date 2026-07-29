@@ -1,16 +1,51 @@
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:6969').replace(/\/$/, '')
+const AUTH_STORAGE_KEY = 'mini-billing-auth'
+
+let accessToken = readStoredAuth()?.token || null
+
+export function setAccessToken(token) {
+  accessToken = token || null
+}
+
+export function readStoredAuth() {
+  if (typeof window === 'undefined') {
+    return null
+  }
+
+  try {
+    return JSON.parse(window.localStorage.getItem(AUTH_STORAGE_KEY))
+  } catch {
+    return null
+  }
+}
+
+export function storeAuthSession(session) {
+  if (typeof window === 'undefined') {
+    return
+  }
+  window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(session))
+  setAccessToken(session?.token)
+}
+
+export function clearAuthSession() {
+  if (typeof window === 'undefined') {
+    return
+  }
+  window.localStorage.removeItem(AUTH_STORAGE_KEY)
+  setAccessToken(null)
+}
 
 async function request(path, options = {}) {
   let response
   const method = options.method || 'GET'
   const requestedAt = new Date().toISOString()
-  const isFormData = options.body instanceof FormData
 
   try {
     response = await fetch(`${API_BASE_URL}${path}`, {
       headers: {
         Accept: 'application/json',
-        ...(options.body && !isFormData ? { 'Content-Type': 'application/json' } : {}),
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+        ...(options.body ? { 'Content-Type': 'application/json' } : {}),
         ...options.headers,
       },
       ...options,
@@ -67,6 +102,12 @@ function toErrorTitle(status, data = {}) {
   if (status === 404) {
     return data.title || 'Resource not found'
   }
+  if (status === 401) {
+    return data.title || 'Authentication required'
+  }
+  if (status === 403) {
+    return data.title || 'Access denied'
+  }
   if (status >= 500) {
     return 'Backend error'
   }
@@ -91,22 +132,23 @@ function createApiError({ title, description, kind, status, method, path, reques
   return error
 }
 
-export function importSourceFile({ sourceType, file, year, month }) {
-  const formData = new FormData()
-  formData.append('files', file)
-  formData.append('sourceType', sourceType)
-
-  if (year) {
-    formData.append('periodYear', String(year))
-  }
-  if (month) {
-    formData.append('periodMonth', String(month))
-  }
-
-  return request('/api/import', {
+export async function login({ username, password }) {
+  const response = await request('/api/auth/login', {
     method: 'POST',
-    body: formData,
+    body: JSON.stringify({ username, password }),
   })
+
+  return {
+    token: response.token,
+    tokenType: response.tokenType || 'Bearer',
+    username: response.username,
+    role: response.role,
+    reference: response.reference,
+  }
+}
+
+export function importCsvFiles() {
+  return request('/api/import', { method: 'POST' })
 }
 
 export function getHealth() {
@@ -133,40 +175,6 @@ export function generateInvoices(year, month) {
   })
 }
 
-export function startBillingRun(year, month) {
-  return request('/api/billing/runs', {
-    method: 'POST',
-    body: JSON.stringify(toBillingRunRequest(year, month)),
-  })
-}
-
-export function stopBillingRun(runId) {
-  return request(`/api/billing/runs/${encodeURIComponent(runId)}/stop`, { method: 'POST' })
-}
-
-export function resumeBillingRun(runId) {
-  return request(`/api/billing/runs/${encodeURIComponent(runId)}/resume`, { method: 'POST' })
-}
-
-export function restartBillingRun(runId) {
-  return request(`/api/billing/runs/${encodeURIComponent(runId)}/restart`, { method: 'POST' })
-}
-
-export function getBillingRun(runId) {
-  return request(`/api/billing/runs/${encodeURIComponent(runId)}`)
-}
-
-function toBillingRunRequest(year, month) {
-  const shortYear = String(Number(year) % 100).padStart(2, '0')
-  const paddedMonth = String(Number(month)).padStart(2, '0')
-  const period = `${shortYear}-${paddedMonth}`
-
-  return {
-    periodStart: period,
-    periodEnd: period,
-  }
-}
-
 export function getInvoice(documentNumber) {
   return request(`/api/invoices/${encodeURIComponent(documentNumber)}`)
 }
@@ -176,7 +184,10 @@ export async function downloadInvoice(documentNumber) {
 
   try {
     response = await fetch(`${API_BASE_URL}/api/invoices/${encodeURIComponent(documentNumber)}/download`, {
-      headers: { Accept: 'application/json' },
+      headers: {
+        Accept: 'application/json',
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+      },
     })
   } catch {
     throw createApiError({

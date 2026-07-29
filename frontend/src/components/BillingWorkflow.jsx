@@ -19,6 +19,7 @@ function BillingWorkflow({
   month,
   year,
   isBackendAvailable,
+  canImport,
   invoicesCount,
   importReadiness,
   onImport,
@@ -81,6 +82,7 @@ function BillingWorkflow({
           validationResults={validationResults}
           isLoading={isImporting}
           isBackendAvailable={isBackendAvailable}
+          canImport={canImport}
           onImport={onImport}
           onDismiss={onDismissImport}
         />

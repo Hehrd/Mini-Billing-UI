@@ -385,12 +385,126 @@ strong {
   gap: var(--space-2);
 }
 
+.role-menu {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-xs);
+}
+
+.role-menu button {
+  min-height: 36px;
+  border-radius: var(--radius-sm);
+  padding: 0 12px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.84rem;
+  font-weight: 800;
+}
+
+.role-menu button.active {
+  background: var(--color-primary-soft);
+  color: var(--color-primary-strong);
+}
+
 .user-name {
   margin: 0;
   color: var(--text-body);
   font-size: 0.9rem;
   font-weight: 650;
   white-space: nowrap;
+}
+
+.login-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 28px;
+}
+
+.login-panel {
+  width: min(100%, 430px);
+  display: grid;
+  gap: var(--space-5);
+  padding: 28px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xl);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-lg);
+}
+
+.login-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.login-brand h1 {
+  margin-bottom: 0;
+  font-size: 2rem;
+  letter-spacing: 0;
+}
+
+.login-form {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.login-form label {
+  display: grid;
+  gap: 8px;
+  color: var(--text-strong);
+  font-weight: 800;
+}
+
+.login-form input {
+  width: 100%;
+  min-height: 46px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-solid);
+  color: var(--text-body);
+  padding: 0 12px;
+}
+
+.login-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  color: var(--text-muted);
+  font-size: 0.86rem;
+}
+
+.text-button {
+  padding: 0;
+  background: transparent;
+  color: var(--color-primary-strong);
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.guard-panel {
+  display: grid;
+  gap: 4px;
+  padding: 18px 20px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+}
+
+.guard-panel strong {
+  font-size: 1rem;
+}
+
+.guard-panel p {
+  margin: 0;
+  color: var(--text-muted);
 }
 
 .dashboard {
@@ -2344,6 +2458,7 @@ td {
 
   .shell-actions {
     justify-content: flex-end;
+    flex-wrap: wrap;
   }
 
   .action-grid {
@@ -2402,6 +2517,11 @@ td {
     justify-content: stretch;
   }
 
+  .role-menu {
+    width: 100%;
+    overflow-x: auto;
+  }
+
   .status-indicator,
   .status-button,
   .user-pill {
@@ -2410,6 +2530,14 @@ td {
 
   .user-pill {
     justify-content: center;
+  }
+
+  .login-shell {
+    padding: 16px;
+  }
+
+  .login-panel {
+    padding: 22px;
   }
 
   .dashboard {
@@ -2527,6 +2655,11 @@ td {
   .shell-actions {
     display: grid;
     grid-template-columns: 1fr auto;
+  }
+
+  .role-menu,
+  .user-pill {
+    grid-column: 1 / -1;
   }
 
   .top-nav,

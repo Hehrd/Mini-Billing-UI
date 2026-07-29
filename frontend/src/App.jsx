@@ -1,17 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   downloadInvoice,
-  getBillingRun,
+  generateInvoices,
+  clearAuthSession,
   getHealth,
   getInvoice,
   getInvoices,
-  importSourceFile,
-  restartBillingRun,
-  resumeBillingRun,
-  startBillingRun,
-  stopBillingRun,
+  importCsvFiles,
+  login,
+  readStoredAuth,
+  storeAuthSession,
 } from './api/invoicesApi.js'
 import Header from './components/Header.jsx'
+import LoginScreen from './components/LoginScreen.jsx'
 import BillingOverview from './components/BillingOverview.jsx'
 import BillingWorkflow from './components/BillingWorkflow.jsx'
 import StatsCards from './components/StatsCards.jsx'
@@ -38,24 +39,19 @@ const MONTHS = [
 
 const DEFAULT_YEAR = 2024
 const DEFAULT_MONTH = 3
-const IMPORT_TYPES = ['CUSTOMERS', 'USAGE', 'TARIFFS']
-const ACTIVE_BILLING_RUN_STATUSES = ['NOT_STARTED', 'IN_PROGRESS']
-
-const EMPTY_IMPORT_STATUS = IMPORT_TYPES.reduce((statusMap, sourceType) => {
-  statusMap[sourceType] = { state: 'idle', message: 'No file selected yet.' }
-  return statusMap
-}, {})
 
 function App() {
+  const [auth, setAuth] = useState(() => readStoredAuth())
+  const [loginError, setLoginError] = useState(null)
+  const [isLoggingIn, setIsLoggingIn] = useState(false)
+  const [activeView, setActiveView] = useState('workspace')
   const [year, setYear] = useState(DEFAULT_YEAR)
   const [month, setMonth] = useState(DEFAULT_MONTH)
   const [invoices, setInvoices] = useState([])
   const [selectedInvoice, setSelectedInvoice] = useState(null)
   const [isInvoicesLoading, setIsInvoicesLoading] = useState(false)
-  const [importStatuses, setImportStatuses] = useState(EMPTY_IMPORT_STATUS)
-  const [validationResults, setValidationResults] = useState([])
+  const [isImporting, setIsImporting] = useState(false)
   const [isGenerating, setIsGenerating] = useState(false)
-  const [billingRun, setBillingRun] = useState(null)
   const [isDetailsLoading, setIsDetailsLoading] = useState(false)
   const [importSummary, setImportSummary] = useState(null)
   const [importStatus, setImportStatus] = useState(null)
@@ -68,7 +64,6 @@ function App() {
   const [health, setHealth] = useState({ status: 'checking', message: 'Checking API' })
   const invoiceRequestId = useRef(0)
   const healthRequestId = useRef(0)
-  const billingRunRequestId = useRef(0)
   const [theme, setTheme] = useState(() => {
     if (typeof window === 'undefined') {
       return 'light'
@@ -83,6 +78,8 @@ function App() {
   const years = useMemo(() => {
     return Array.from({ length: 201 }, (_, index) => 1900 + index)
   }, [])
+
+  const isAdmin = auth?.role === 'ADMIN'
 
   const selectedPeriod = useMemo(() => {
     return formatMonthYear(month, year, MONTHS)
@@ -120,13 +117,17 @@ function App() {
       if (requestId !== healthRequestId.current) {
         return
       }
+      if (auth && error.status === 404) {
+        setHealth({ status: 'connected', message: 'API authenticated', details: { healthEndpoint: 'missing' } })
+        return
+      }
       setHealth({ status: 'offline', message: error.message })
     }
-  }, [])
+  }, [auth])
 
   useEffect(() => {
     loadHealth()
-  }, [loadHealth])
+  }, [auth, loadHealth])
 
   const loadInvoices = useCallback(async ({ toastOnSuccess = false } = {}) => {
     const requestId = invoiceRequestId.current + 1
@@ -170,30 +171,11 @@ function App() {
   }, [month, year])
 
   useEffect(() => {
-    loadInvoices()
-  }, [loadInvoices])
-
-  useEffect(() => {
-    if (!billingRun?.id || !ACTIVE_BILLING_RUN_STATUSES.includes(billingRun.status)) {
-      return undefined
+    if (!auth) {
+      return
     }
-
-    const intervalId = window.setInterval(async () => {
-      const requestId = billingRunRequestId.current + 1
-      billingRunRequestId.current = requestId
-
-      try {
-        const latestRun = await getBillingRun(billingRun.id)
-        if (requestId === billingRunRequestId.current) {
-          setBillingRun(normalizeBillingRun(latestRun))
-        }
-      } catch {
-        window.clearInterval(intervalId)
-      }
-    }, 3000)
-
-    return () => window.clearInterval(intervalId)
-  }, [billingRun?.id, billingRun?.status])
+    loadInvoices()
+  }, [auth, loadInvoices])
 
   const stats = useMemo(() => {
     const totalAmount = invoices.reduce((sum, invoice) => sum + Number(invoice.totalAmount || 0), 0)
@@ -218,135 +200,49 @@ function App() {
     }
   }, [invoices, selectedPeriod])
 
-  const isImporting = useMemo(() => {
-    return Object.values(importStatuses).some((status) => status.state === 'importing')
-  }, [importStatuses])
-
-  const importReadiness = useMemo(() => {
-    const missingFiles = IMPORT_TYPES.filter((sourceType) => importStatuses[sourceType]?.state !== 'success')
-    const blockingValidationCount = validationResults.filter((result) => ['ERROR', 'CRITICAL'].includes(result.severity)).length
-
-    return {
-      isReady: missingFiles.length === 0 && blockingValidationCount === 0,
-      missingFiles,
-      blockingValidationCount,
-    }
-  }, [importStatuses, validationResults])
-
-  const hasImportedData = importReadiness.isReady
-
-  function setImportTypeStatus(sourceType, status) {
-    setImportStatuses((current) => ({
-      ...current,
-      [sourceType]: {
-        ...current[sourceType],
-        ...status,
-      },
-    }))
-  }
-
-  async function handleImport({ sourceType, file, validationError } = {}) {
-    if (!sourceType || !file) {
+  async function handleImport() {
+    if (!guardRole(['ADMIN'], 'Only ADMIN users can import source data.')) {
       return
     }
-
-    if (validationError) {
-      setImportTypeStatus(sourceType, {
-        state: 'error',
-        fileName: file.name,
-        message: validationError,
-        validation: validationError,
-      })
-      setValidationResults((current) => [
-        ...current.filter((result) => result.sourceType !== sourceType),
-        {
-          id: `${sourceType}-${Date.now()}`,
-          sourceType,
-          fileName: file.name,
-          rowNumber: 'File',
-          field: validationError.toLowerCase().includes('extension') || validationError.includes('.csv') ? 'extension' : 'filename',
-          severity: 'ERROR',
-          message: validationError,
-        },
-      ])
-      setImportError(null)
-      setImportStatus(null)
-      pushToast({
-        type: 'error',
-        title: `${toImportLabel(sourceType)} file rejected`,
-        description: validationError,
-      })
-      return
-    }
-
     if (isImporting) {
       return
     }
 
-    setImportTypeStatus(sourceType, {
-      state: 'importing',
-      fileName: file.name,
-      message: `Uploading ${file.name}.`,
-      validation: null,
-    })
-    setValidationResults((current) => current.filter((result) => result.sourceType !== sourceType))
+    setIsImporting(true)
     setImportError(null)
     setImportStatus(null)
     setPageError(null)
 
     try {
-      const summary = await importSourceFile({ sourceType, file, year, month })
+      const summary = await importCsvFiles()
       setImportSummary(summary)
-      setImportTypeStatus(sourceType, {
-        state: 'success',
-        fileName: file.name,
-        message: toImportStatusMessage(summary, file.name),
-        validation: null,
-      })
-      setImportStatus(toImportStatusMessage(summary, file.name))
-      setValidationResults((current) => [
-        ...current.filter((result) => result.sourceType !== sourceType),
-        ...normalizeValidationResults(summary, sourceType, file.name),
-      ])
+      setImportStatus(
+        `Imported ${summary.importedUsers} users, ${summary.importedReadings} readings and ${summary.importedPrices} prices.`,
+      )
       pushToast({
         type: 'success',
-        title: `${toImportLabel(sourceType)} import completed`,
-        description: toImportStatusMessage(summary, file.name),
+        title: 'CSV import completed',
+        description: `${summary.importedUsers} users, ${summary.importedReadings} readings and ${summary.importedPrices} prices imported.`,
       })
       await loadInvoices()
     } catch (error) {
-      setImportTypeStatus(sourceType, {
-        state: 'error',
-        fileName: file.name,
-        message: error.description || error.message || 'Import failed.',
-        validation: null,
-      })
-      setValidationResults((current) => [
-        ...current.filter((result) => result.sourceType !== sourceType),
-        ...normalizeValidationResults(error, sourceType, file.name),
-      ])
       setImportError(error)
       pushToast({
         type: 'error',
-        title: error.title || `${toImportLabel(sourceType)} import failed`,
-        description: 'Review the import row for details and retry when ready.',
+        title: error.title || 'Import failed',
+        description: 'Review the import panel for details and retry when ready.',
       })
+    } finally {
+      setIsImporting(false)
     }
   }
 
-  async function handleBillingRunAction(action, event) {
+  async function handleGenerate(event) {
     event?.preventDefault()
-    if (isGenerating || health.status !== 'connected' || Number(year) < 1900 || Number(year) > 2100) {
+    if (!guardRole(['USER', 'ADMIN'], 'Sign in with a USER or ADMIN account to generate invoices.')) {
       return
     }
-
-    if (!importReadiness.isReady) {
-      setGenerateError(createClientError('Billing run blocked', toReadinessMessage(importReadiness)))
-      pushToast({
-        type: 'error',
-        title: 'Billing run blocked',
-        description: toReadinessMessage(importReadiness),
-      })
+    if (isGenerating || health.status !== 'connected' || Number(year) < 1900 || Number(year) > 2100) {
       return
     }
 
@@ -355,28 +251,30 @@ function App() {
     setGenerateStatus(null)
     setPageError(null)
 
-    if (action === 'START' && invoices.length > 0 && !window.confirm('Invoices are already loaded for this selected period. Start a new billing run?')) {
+    if (invoices.length > 0 && !window.confirm('Invoices are already loaded for this selected period. Generate again?')) {
       setIsGenerating(false)
       return
     }
 
     try {
-      const result = await runBillingLifecycleAction(action, { billingRun, year, month })
-      const normalizedRun = normalizeBillingRun(result)
-      setBillingRun(normalizedRun)
-      setGenerateStatus(toBillingRunStatusMessage(action, normalizedRun))
+      const result = await generateInvoices(year, month)
+      setGenerateStatus(
+        `Generated ${result.generatedCount} invoice${result.generatedCount === 1 ? '' : 's'}${
+          result.skippedExistingCount ? ` and skipped ${result.skippedExistingCount} existing.` : '.'
+        }`,
+      )
       pushToast({
         type: 'success',
-        title: toBillingRunToastTitle(action),
-        description: toBillingRunStatusMessage(action, normalizedRun),
+        title: 'Invoice generation completed',
+        description: `${result.generatedCount} generated, ${result.skippedExistingCount} skipped for ${selectedPeriod}.`,
       })
       await loadInvoices()
     } catch (error) {
       setGenerateError(error)
       pushToast({
         type: 'error',
-        title: error.title || 'Billing run action failed',
-        description: 'The billing run panel has the full error details.',
+        title: error.title || 'Generation failed',
+        description: 'The generation panel has the full error details.',
       })
     } finally {
       setIsGenerating(false)
@@ -384,6 +282,9 @@ function App() {
   }
 
   async function handleView(documentNumber) {
+    if (!guardRole(['USER', 'ADMIN'], 'Sign in to view invoice details.')) {
+      return
+    }
     setSelectedInvoice(null)
     setIsDetailsLoading(true)
     setPageError(null)
@@ -403,6 +304,9 @@ function App() {
   }
 
   async function handleDownload(documentNumber) {
+    if (!guardRole(['USER', 'ADMIN'], 'Sign in to download invoices.')) {
+      return
+    }
     setPageError(null)
 
     try {
@@ -446,6 +350,52 @@ function App() {
   }
 
   const isBackendAvailable = health.status === 'connected'
+  const canImport = isAdmin
+
+  async function handleLogin(credentials) {
+    setIsLoggingIn(true)
+    setLoginError(null)
+
+    try {
+      const session = await login(credentials)
+      storeAuthSession(session)
+      setAuth(session)
+      setActiveView('workspace')
+      pushToast({
+        type: 'success',
+        title: 'Signed in',
+        description: `${session.username} authenticated as ${session.role}.`,
+      })
+    } catch (error) {
+      setLoginError(error)
+    } finally {
+      setIsLoggingIn(false)
+    }
+  }
+
+  function handleLogout() {
+    clearAuthSession()
+    setAuth(null)
+    setActiveView('workspace')
+    setInvoices([])
+    setSelectedInvoice(null)
+    setImportSummary(null)
+    setPageError(null)
+    setLoginError(null)
+  }
+
+  function guardRole(roles, message) {
+    if (auth && roles.includes(auth.role)) {
+      return true
+    }
+    const error = new Error(message)
+    error.title = 'Action not allowed'
+    error.description = message
+    error.kind = 'authorization'
+    setPageError({ error })
+    pushToast({ type: 'error', title: error.title, description: message })
+    return false
+  }
 
   function focusImportWorkflow() {
     const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches
@@ -454,15 +404,41 @@ function App() {
       ?.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' })
   }
 
+  if (!auth) {
+    return (
+      <div className="app-shell">
+        <LoginScreen
+          error={loginError}
+          isLoading={isLoggingIn}
+          theme={theme}
+          onLogin={handleLogin}
+          onToggleTheme={() => setTheme((currentTheme) => (currentTheme === 'dark' ? 'light' : 'dark'))}
+        />
+        <ToastStack toasts={toasts} onDismiss={(id) => setToasts((current) => current.filter((toast) => toast.id !== id))} />
+      </div>
+    )
+  }
+
   return (
     <div className="app-shell">
       <Header
         selectedPeriod={selectedPeriod}
         theme={theme}
+        user={auth}
+        activeView={activeView}
+        onViewChange={setActiveView}
+        onLogout={handleLogout}
         onToggleTheme={() => setTheme((currentTheme) => (currentTheme === 'dark' ? 'light' : 'dark'))}
       />
 
       <main className="dashboard">
+        {activeView !== 'workspace' && (
+          <section className="guard-panel" role="status">
+            <strong>{activeViewLabel(activeView)}</strong>
+            <p>This section is available in the ADMIN menu shell. The detailed screen is not implemented yet.</p>
+          </section>
+        )}
+
         <BillingOverview
           selectedPeriod={selectedPeriod}
           healthStatus={health.status}
@@ -470,8 +446,9 @@ function App() {
           invoicesCount={invoices.length}
           isImporting={isImporting}
           isGenerating={isGenerating}
-          onImport={() => focusImportWorkflow()}
-          onGenerate={() => handleBillingRunAction('START')}
+          canImport={canImport}
+          onImport={handleImport}
+          onGenerate={() => handleGenerate()}
         />
 
         {pageError && (
@@ -483,11 +460,8 @@ function App() {
           importSummary={importSummary}
           importStatus={importStatus}
           importError={importError}
-          importStatuses={importStatuses}
-          validationResults={validationResults}
           generateStatus={generateStatus}
           generateError={generateError}
-          billingRun={billingRun}
           isImporting={isImporting}
           isGenerating={isGenerating}
           selectedPeriod={selectedPeriod}
@@ -496,10 +470,10 @@ function App() {
           month={month}
           year={year}
           isBackendAvailable={isBackendAvailable}
+          canImport={canImport}
           invoicesCount={invoices.length}
-          importReadiness={importReadiness}
           onImport={handleImport}
-          onBillingRunAction={handleBillingRunAction}
+          onGenerate={handleGenerate}
           onMonthChange={setMonth}
           onYearChange={setYear}
           onPreviousPeriod={handlePreviousPeriod}
@@ -545,147 +519,13 @@ function App() {
   )
 }
 
-async function runBillingLifecycleAction(action, { billingRun, year, month }) {
-  if (action === 'STOP') {
-    return stopBillingRun(billingRun.id)
-  }
-  if (action === 'RESUME') {
-    return resumeBillingRun(billingRun.id)
-  }
-  if (action === 'RESTART') {
-    return restartBillingRun(billingRun.id)
-  }
-  return startBillingRun(year, month)
-}
-
-function normalizeBillingRun(run) {
-  if (!run) {
-    return null
-  }
-
-  const processedRecords = Number(run.processedRecords ?? run.processedCount ?? run.processed ?? 0)
-  const failedRecords = Number(run.failedRecords ?? run.failedCount ?? run.failed ?? 0)
-  const totalRecords = Number(run.totalRecords ?? run.totalCount ?? run.total ?? processedRecords + failedRecords)
-
+function activeViewLabel(activeView) {
   return {
-    id: run.id || run.runId,
-    status: run.status || 'NOT_STARTED',
-    periodStart: run.periodStart,
-    periodEnd: run.periodEnd,
-    year: run.year,
-    month: run.month,
-    startedAt: run.startedAt || run.createdAt || run.startTime,
-    endedAt: run.endedAt || run.completedAt || run.endTime,
-    startedBy: run.startedBy || run.createdBy,
-    processedRecords,
-    failedRecords,
-    totalRecords,
-    frozenTariffVersion: run.frozenTariffVersion || run.tariffVersion || run.priceListVersion || '—',
-  }
-}
-
-function toBillingRunStatusMessage(action, run) {
-  const actionCopy = {
-    START: 'started',
-    STOP: 'paused',
-    RESUME: 'resumed',
-    RESTART: 'restarted',
-  }
-  return `Billing run ${run?.id || ''} ${actionCopy[action] || 'updated'} with status ${run?.status || 'UNKNOWN'}.`
-}
-
-function toBillingRunToastTitle(action) {
-  const titles = {
-    START: 'Billing run started',
-    STOP: 'Billing run paused',
-    RESUME: 'Billing run resumed',
-    RESTART: 'Billing run restarted',
-  }
-  return titles[action] || 'Billing run updated'
-}
-
-function toImportLabel(sourceType) {
-  const labels = {
-    CUSTOMERS: 'Customers',
-    USAGE: 'Usage',
-    TARIFFS: 'Tariffs',
-  }
-  return labels[sourceType] || sourceType
-}
-
-function toImportStatusMessage(summary, fileName) {
-  if (!summary) {
-    return `${fileName} was accepted for import.`
-  }
-
-  if (summary.status && summary.importId) {
-    return `${fileName} import is ${summary.status.toLowerCase()} as ${summary.importId}.`
-  }
-
-  const counts = [
-    summary.importedUsers !== undefined ? `${summary.importedUsers} customers` : null,
-    summary.importedReadings !== undefined ? `${summary.importedReadings} usage rows` : null,
-    summary.importedPrices !== undefined ? `${summary.importedPrices} tariffs` : null,
-  ].filter(Boolean)
-
-  return counts.length ? `Imported ${counts.join(', ')} from ${fileName}.` : `${fileName} was imported.`
-}
-
-function normalizeValidationResults(payload, sourceType, fileName) {
-  const candidates = payload?.validationErrors || payload?.details || payload?.errors || []
-  const items = Array.isArray(candidates) ? candidates : [candidates]
-
-  return items
-    .map((item, index) => {
-      if (typeof item === 'string') {
-        return {
-          id: `${sourceType}-${fileName}-${index}`,
-          sourceType,
-          fileName,
-          rowNumber: 'File',
-          field: 'structure',
-          severity: 'WARNING',
-          message: item,
-        }
-      }
-
-      if (!item) {
-        return null
-      }
-
-      return {
-        id: item.id || `${sourceType}-${fileName}-${index}`,
-        sourceType,
-        fileName: item.fileName || fileName,
-        rowNumber: item.rowNumber ?? item.row ?? 'File',
-        field: item.field || item.column || 'structure',
-        severity: String(item.severity || item.level || 'ERROR').toUpperCase(),
-        message: item.message || item.reason || item.detail || 'Validation issue found.',
-      }
-    })
-    .filter(Boolean)
-}
-
-function toReadinessMessage(readiness) {
-  const messages = []
-  if (readiness.missingFiles.length > 0) {
-    messages.push(`Missing required imports: ${readiness.missingFiles.map(toImportLabel).join(', ')}.`)
-  }
-  if (readiness.blockingValidationCount > 0) {
-    messages.push(`${readiness.blockingValidationCount} blocking validation error${readiness.blockingValidationCount === 1 ? '' : 's'} must be fixed.`)
-  }
-  return messages.join(' ')
-}
-
-function createClientError(title, description) {
-  const error = new Error(description)
-  error.title = title
-  error.description = description
-  error.kind = 'validation'
-  error.technicalDetails = {
-    category: 'client-readiness',
-  }
-  return error
+    'billing-runs': 'Billing runs',
+    reports: 'Reports',
+    audit: 'Audit',
+    users: 'Users',
+  }[activeView] || 'Workspace'
 }
 
 export default App
