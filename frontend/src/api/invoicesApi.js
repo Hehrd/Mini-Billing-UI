@@ -148,78 +148,160 @@ export async function login({ username, password }) {
 }
 
 export function importCsvFiles() {
-  return request('/api/import', { method: 'POST' })
+  return request('/api/file/import', { method: 'POST' })
 }
 
 export function getHealth() {
   return request('/api/billing/health')
 }
 
-export function getInvoices({ year, month } = {}) {
-  const params = new URLSearchParams()
-  if (year) {
-    params.set('year', year)
-  }
-  if (month) {
-    params.set('month', month)
+function normalizePage(response) {
+  if (Array.isArray(response)) {
+    return { content: response, totalElements: response.length, number: 0, size: response.length, totalPages: 1 }
   }
 
-  const query = params.toString()
-  return request(`/api/invoices${query ? `?${query}` : ''}`)
+  return {
+    content: Array.isArray(response?.content) ? response.content : [],
+    totalElements: Number(response?.totalElements || 0),
+    number: Number(response?.number || 0),
+    size: Number(response?.size || 0),
+    totalPages: Number(response?.totalPages || 0),
+    first: Boolean(response?.first),
+    last: Boolean(response?.last),
+  }
+}
+
+function withPageParams({ page = 0, size = 50, sort, ...filters } = {}) {
+  const params = new URLSearchParams()
+  params.set('page', page)
+  params.set('size', size)
+  if (sort) {
+    params.set('sort', sort)
+  }
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') {
+      params.set(key, value)
+    }
+  })
+  return params.toString()
+}
+
+export async function getInvoices({ userId, page = 0, size = 100, sort = 'documentDate,desc' } = {}) {
+  const query = withPageParams({ page, size, sort, userId })
+  const response = await request(`/api/billing/invoices?${query}`)
+  return normalizePage(response).content
 }
 
 export function generateInvoices(year, month) {
-  return request('/api/invoices/generate', {
+  return request('/api/billing/generate', {
     method: 'POST',
     body: JSON.stringify({ year: Number(year), month: Number(month) }),
   })
 }
 
-export function getInvoice(documentNumber) {
-  return request(`/api/invoices/${encodeURIComponent(documentNumber)}`)
+export async function getInvoice(documentNumber) {
+  const invoices = await getInvoices()
+  const invoice = invoices.find((item) => item.documentNumber === documentNumber)
+  if (!invoice) {
+    throw createApiError({
+      title: 'Invoice not found',
+      description: `Invoice ${documentNumber} is not visible to the current user.`,
+      kind: 'validation',
+      status: 404,
+      method: 'GET',
+      path: `/api/billing/invoices?documentNumber=${encodeURIComponent(documentNumber)}`,
+      requestedAt: new Date().toISOString(),
+    })
+  }
+  return invoice
 }
 
 export async function downloadInvoice(documentNumber) {
-  let response
-
   try {
-    response = await fetch(`${API_BASE_URL}/api/invoices/${encodeURIComponent(documentNumber)}/download`, {
-      headers: {
-        Accept: 'application/json',
-        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-      },
-    })
-  } catch {
+    const invoice = await getInvoice(documentNumber)
+    const blob = new Blob([buildInvoicePdf(invoice)], { type: 'application/pdf' })
+    return { blob, fileName: `${documentNumber}.pdf` }
+  } catch (error) {
+    if (error.status) {
+      throw error
+    }
     throw createApiError({
       title: 'Backend unavailable',
-      description: 'The invoice download request could not reach the Mini Billing API.',
+      description: 'The invoice PDF export could not be prepared.',
       kind: 'connection',
       method: 'GET',
-      path: `/api/invoices/${encodeURIComponent(documentNumber)}/download`,
+      path: `/api/billing/invoices`,
       requestedAt: new Date().toISOString(),
     })
   }
-
-  if (!response.ok) {
-    throw await readError(response, {
-      method: 'GET',
-      path: `/api/invoices/${encodeURIComponent(documentNumber)}/download`,
-      requestedAt: new Date().toISOString(),
-    })
-  }
-
-  const blob = await response.blob()
-  const disposition = response.headers.get('Content-Disposition') || ''
-  const fileName = extractFileName(disposition) || `${documentNumber}.json`
-  return { blob, fileName }
 }
 
-function extractFileName(contentDisposition) {
-  const encodedMatch = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i)
-  if (encodedMatch) {
-    return decodeURIComponent(encodedMatch[1].replace(/"/g, ''))
-  }
+function buildInvoicePdf(invoice) {
+  const lines = [
+    `Invoice ${invoice.documentNumber || ''}`,
+    `Document date: ${invoice.documentDate || ''}`,
+    `Customer: ${invoice.consumer || ''}`,
+    `Reference: ${invoice.reference || ''}`,
+    `Total amount: ${invoice.totalAmount || 0}`,
+    '',
+    'Lines:',
+    ...(invoice.lines || []).slice(0, 24).map((line) => {
+      return `${line.product || ''} | quantity ${line.quantity || ''} | price ${line.unitPrice || line.price || ''} | amount ${line.amount || ''}`
+    }),
+  ]
 
-  const match = contentDisposition.match(/filename="?([^"]+)"?/i)
-  return match?.[1]
+  const content = [
+    'BT',
+    '/F1 12 Tf',
+    '50 790 Td',
+    ...lines.flatMap((line, index) => [
+      index === 0 ? '/F1 18 Tf' : '/F1 10 Tf',
+      `(${escapePdfText(line)}) Tj`,
+      index === 0 ? '/F1 10 Tf' : '',
+      '0 -18 Td',
+    ]).filter(Boolean),
+    'ET',
+  ].join('\n')
+
+  const objects = [
+    '1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n',
+    '2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n',
+    '3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n',
+    '4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n',
+    `5 0 obj\n<< /Length ${content.length} >>\nstream\n${content}\nendstream\nendobj\n`,
+  ]
+
+  let pdf = '%PDF-1.4\n'
+  const offsets = [0]
+  objects.forEach((object) => {
+    offsets.push(pdf.length)
+    pdf += object
+  })
+  const xrefOffset = pdf.length
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`
+  offsets.slice(1).forEach((offset) => {
+    pdf += `${String(offset).padStart(10, '0')} 00000 n \n`
+  })
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`
+  return pdf
+}
+
+function escapePdfText(value) {
+  return String(value).replace(/[\\()]/g, '\\$&')
+}
+
+export async function getBillingRuns({ page = 0, size = 20, sort = 'startedAt,desc' } = {}) {
+  return normalizePage(await request(`/api/billing/runs?${withPageParams({ page, size, sort })}`))
+}
+
+export function getBillingRunReport(runId) {
+  return request(`/api/reports/billing-runs/${encodeURIComponent(runId)}`)
+}
+
+export async function getAuditLogs({ page = 0, size = 50, sort = 'occurredAt,desc' } = {}) {
+  return normalizePage(await request(`/api/audit/logs?${withPageParams({ page, size, sort })}`))
+}
+
+export async function getErrorLogs({ page = 0, size = 50, sort = 'occurredAt,desc' } = {}) {
+  return normalizePage(await request(`/api/audit/errors?${withPageParams({ page, size, sort })}`))
 }

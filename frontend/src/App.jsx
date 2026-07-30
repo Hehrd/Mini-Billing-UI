@@ -4,6 +4,10 @@ import {
   generateInvoices,
   clearAuthSession,
   getHealth,
+  getAuditLogs,
+  getBillingRunReport,
+  getBillingRuns,
+  getErrorLogs,
   getInvoice,
   getInvoices,
   importCsvFiles,
@@ -18,6 +22,8 @@ import BillingWorkflow from './components/BillingWorkflow.jsx'
 import StatsCards from './components/StatsCards.jsx'
 import InvoiceTable from './components/InvoiceTable.jsx'
 import InvoiceDetailsModal from './components/InvoiceDetailsModal.jsx'
+import ReportsView from './components/ReportsView.jsx'
+import AuditLogsView from './components/AuditLogsView.jsx'
 import ErrorAlert from './components/ui/ErrorAlert.jsx'
 import ToastStack from './components/ui/ToastStack.jsx'
 import { formatMoney, formatMonthYear, formatNumber } from './utils/formatters.js'
@@ -60,6 +66,14 @@ function App() {
   const [generateError, setGenerateError] = useState(null)
   const [invoiceError, setInvoiceError] = useState(null)
   const [pageError, setPageError] = useState(null)
+  const [billingRuns, setBillingRuns] = useState([])
+  const [reportsByRunId, setReportsByRunId] = useState({})
+  const [reportsError, setReportsError] = useState(null)
+  const [isReportsLoading, setIsReportsLoading] = useState(false)
+  const [auditLogs, setAuditLogs] = useState([])
+  const [errorLogs, setErrorLogs] = useState([])
+  const [auditError, setAuditError] = useState(null)
+  const [isAuditLoading, setIsAuditLoading] = useState(false)
   const [toasts, setToasts] = useState([])
   const [health, setHealth] = useState({ status: 'checking', message: 'Checking API' })
   const invoiceRequestId = useRef(0)
@@ -136,7 +150,7 @@ function App() {
     setInvoiceError(null)
 
     try {
-      const loadedInvoices = await getInvoices({ year, month })
+      const loadedInvoices = await getInvoices({ userId: isAdmin ? undefined : auth?.reference })
       if (requestId !== invoiceRequestId.current) {
         return
       }
@@ -163,7 +177,65 @@ function App() {
         setIsInvoicesLoading(false)
       }
     }
-  }, [month, pushToast, selectedPeriod, year])
+  }, [auth?.reference, isAdmin, pushToast, selectedPeriod])
+
+  const loadReports = useCallback(async ({ toastOnSuccess = false } = {}) => {
+    if (!guardRole(['ADMIN'], 'Reports are available only to ADMIN users.')) {
+      return
+    }
+    setIsReportsLoading(true)
+    setReportsError(null)
+    try {
+      const page = await getBillingRuns()
+      setBillingRuns(page.content)
+      if (page.content[0]) {
+        const report = await getBillingRunReport(page.content[0].id)
+        setReportsByRunId((current) => ({ ...current, [page.content[0].id]: report }))
+      }
+      if (toastOnSuccess) {
+        pushToast({ type: 'success', title: 'Reports refreshed', description: `${page.content.length} Billing Runs loaded.` })
+      }
+    } catch (error) {
+      setReportsError(error)
+      pushToast({ type: 'error', title: error.title || 'Reports failed', description: 'The reports screen could not be refreshed.' })
+    } finally {
+      setIsReportsLoading(false)
+    }
+  }, [pushToast])
+
+  const loadReport = useCallback(async (runId) => {
+    if (!runId || reportsByRunId[runId]) {
+      return
+    }
+    try {
+      const report = await getBillingRunReport(runId)
+      setReportsByRunId((current) => ({ ...current, [runId]: report }))
+    } catch (error) {
+      setReportsError(error)
+      pushToast({ type: 'error', title: error.title || 'Report failed', description: `Report ${runId} could not be loaded.` })
+    }
+  }, [pushToast, reportsByRunId])
+
+  const loadAudit = useCallback(async ({ toastOnSuccess = false } = {}) => {
+    if (!guardRole(['ADMIN'], 'Audit screens are available only to ADMIN users.')) {
+      return
+    }
+    setIsAuditLoading(true)
+    setAuditError(null)
+    try {
+      const [auditPage, errorPage] = await Promise.all([getAuditLogs(), getErrorLogs()])
+      setAuditLogs(auditPage.content)
+      setErrorLogs(errorPage.content)
+      if (toastOnSuccess) {
+        pushToast({ type: 'success', title: 'Audit refreshed', description: 'Audit and error logs loaded.' })
+      }
+    } catch (error) {
+      setAuditError(error)
+      pushToast({ type: 'error', title: error.title || 'Audit failed', description: 'The audit screen could not be refreshed.' })
+    } finally {
+      setIsAuditLoading(false)
+    }
+  }, [pushToast])
 
   useEffect(() => {
     setInvoices([])
@@ -176,6 +248,15 @@ function App() {
     }
     loadInvoices()
   }, [auth, loadInvoices])
+
+  useEffect(() => {
+    if (activeView === 'reports' && auth?.role === 'ADMIN') {
+      loadReports()
+    }
+    if (activeView === 'audit' && auth?.role === 'ADMIN') {
+      loadAudit()
+    }
+  }, [activeView, auth?.role, loadAudit, loadReports])
 
   const stats = useMemo(() => {
     const totalAmount = invoices.reduce((sum, invoice) => sum + Number(invoice.totalAmount || 0), 0)
@@ -324,9 +405,29 @@ function App() {
       pushToast({
         type: 'error',
         title: error.title || 'Download failed',
-        description: 'The invoice JSON download could not be started.',
+        description: 'The invoice PDF download could not be started.',
       })
     }
+  }
+
+  function handleExportReport(run, report) {
+    if (!run || !report) {
+      return
+    }
+    const rows = [
+      ['runId', 'periodStart', 'periodEnd', 'status', 'processedRecords', 'successfulInvoices', 'failedRecords', 'failureSummary'],
+      [run.id, run.periodStart, run.periodEnd, run.status, report.processedRecords, report.successfulInvoices, report.failedRecords, report.failureSummary || ''],
+    ]
+    const csv = rows.map((row) => row.map((value) => `"${String(value ?? '').replaceAll('"', '""')}"`).join(',')).join('\n')
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `billing-run-${run.id}-report.csv`
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(url)
   }
 
   function handlePreviousPeriod() {
@@ -432,14 +533,35 @@ function App() {
       />
 
       <main className="dashboard">
-        {activeView !== 'workspace' && (
-          <section className="guard-panel" role="status">
-            <strong>{activeViewLabel(activeView)}</strong>
-            <p>This section is available in the ADMIN menu shell. The detailed screen is not implemented yet.</p>
-          </section>
-        )}
+        {activeView === 'reports' ? (
+          <ReportsView
+            billingRuns={billingRuns}
+            reportsByRunId={reportsByRunId}
+            isLoading={isReportsLoading}
+            error={reportsError}
+            onRefresh={() => loadReports({ toastOnSuccess: true })}
+            onSelectRun={loadReport}
+            onExport={handleExportReport}
+          />
+        ) : activeView === 'audit' ? (
+          <AuditLogsView
+            auditLogs={auditLogs}
+            errorLogs={errorLogs}
+            isLoading={isAuditLoading}
+            error={auditError}
+            user={auth}
+            onRefresh={() => loadAudit({ toastOnSuccess: true })}
+          />
+        ) : (
+          <>
+          {activeView !== 'workspace' && (
+            <section className="guard-panel" role="status">
+              <strong>{activeViewLabel(activeView)}</strong>
+              <p>This section is available in the ADMIN menu shell. The detailed screen is not implemented yet.</p>
+            </section>
+          )}
 
-        <BillingOverview
+          <BillingOverview
           selectedPeriod={selectedPeriod}
           healthStatus={health.status}
           importSummary={importSummary}
@@ -490,17 +612,21 @@ function App() {
 
         <StatsCards stats={stats} isLoading={isInvoicesLoading} />
 
-        <InvoiceTable
+          <InvoiceTable
           invoices={invoices}
+          errorLogs={errorLogs}
           isLoading={isInvoicesLoading}
           error={invoiceError}
           selectedPeriod={selectedPeriod}
+          user={auth}
           onRefresh={() => loadInvoices({ toastOnSuccess: true })}
           onView={handleView}
           onDownload={handleDownload}
           onStartImport={focusImportWorkflow}
           onClearError={() => setInvoiceError(null)}
         />
+          </>
+        )}
       </main>
 
       <InvoiceDetailsModal

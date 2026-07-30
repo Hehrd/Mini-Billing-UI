@@ -46,7 +46,7 @@ function InvoiceDetailsModal({ invoice, selectedPeriod, isLoading, onClose, onDo
 
           <div className="modal-actions">
             <Button type="button" onClick={() => onDownload(invoice.documentNumber)}>
-              Download JSON
+              Download PDF
             </Button>
           </div>
 

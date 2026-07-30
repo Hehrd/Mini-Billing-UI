@@ -10,9 +10,11 @@ const PAGE_SIZE_OPTIONS = [5, 10, 20]
 
 function InvoiceTable({
   invoices,
+  errorLogs = [],
   isLoading,
   error,
   selectedPeriod,
+  user,
   onRefresh,
   onView,
   onDownload,
@@ -37,6 +39,15 @@ function InvoiceTable({
 
     return [...searched].sort((left, right) => compareInvoices(left, right, sort))
   }, [invoices, query, sort])
+  const errorsByCustomer = useMemo(() => {
+    return errorLogs.reduce((groups, log) => {
+      if (!log.customerId) {
+        return groups
+      }
+      groups[log.customerId] = [...(groups[log.customerId] || []), log]
+      return groups
+    }, {})
+  }, [errorLogs])
 
   const totalPages = Math.max(1, Math.ceil(filteredInvoices.length / pageSize))
   const safePage = Math.min(page, totalPages)
@@ -71,7 +82,9 @@ function InvoiceTable({
           <p>
             {isLoading
               ? 'Refreshing invoice data...'
-              : `${formatNumber(filteredInvoices.length)} of ${formatNumber(invoices.length)} invoices loaded`}
+              : `${formatNumber(filteredInvoices.length)} of ${formatNumber(invoices.length)} invoices loaded${
+                  user?.role === 'USER' ? ' for your customer account' : ''
+                }`}
           </p>
         </div>
         <div className="register-count">
@@ -156,6 +169,7 @@ function InvoiceTable({
                   <SortableHeader label="Document number" column="documentNumber" sort={sort} onSort={updateSort} />
                   <SortableHeader label="Customer" column="consumer" sort={sort} onSort={updateSort} />
                   <SortableHeader label="Reference" column="reference" sort={sort} onSort={updateSort} />
+                  <th>Status</th>
                   <th>Billing period</th>
                   <SortableHeader label="Lines" column="linesCount" sort={sort} onSort={updateSort} />
                   <SortableHeader label="Total amount" column="totalAmount" sort={sort} onSort={updateSort} />
@@ -163,7 +177,9 @@ function InvoiceTable({
                 </tr>
               </thead>
               <tbody>
-                {visibleInvoices.map((invoice) => (
+                {visibleInvoices.map((invoice) => {
+                  const invoiceStatus = getInvoiceStatus(invoice, errorsByCustomer[invoice.reference])
+                  return (
                   <tr
                     className="invoice-row"
                     key={invoice.documentNumber}
@@ -186,6 +202,16 @@ function InvoiceTable({
                     </td>
                     <td>{invoice.consumer}</td>
                     <td>{invoice.reference}</td>
+                    <td>
+                      <div className="status-cell">
+                        <span className={`status-chip status-${invoiceStatus.tone}`}>{invoiceStatus.label}</span>
+                        {invoiceStatus.indicators.map((indicator) => (
+                          <span className={`indicator-dot indicator-${indicator.tone}`} key={indicator.label} title={indicator.label}>
+                            {indicator.short}
+                          </span>
+                        ))}
+                      </div>
+                    </td>
                     <td>{selectedPeriod}</td>
                     <td>{invoice.linesCount ?? '—'}</td>
                     <td className="amount-cell">{formatMoney(invoice.totalAmount)}</td>
@@ -200,12 +226,13 @@ function InvoiceTable({
                           type="button"
                           onClick={() => onDownload(invoice.documentNumber)}
                         >
-                          Download JSON
+                          Download PDF
                         </Button>
                       </div>
                     </td>
                   </tr>
-                ))}
+                  )
+                })}
               </tbody>
             </table>
           </div>
@@ -242,6 +269,31 @@ function InvoiceTable({
       )}
     </Card>
   )
+}
+
+function getInvoiceStatus(invoice, customerErrors = []) {
+  const openErrors = customerErrors.filter((error) => error.status === 'OPEN')
+  const hasCritical = openErrors.some((error) => error.severity === 'CRITICAL')
+  const hasWarning = openErrors.some((error) => error.severity === 'WARNING')
+  const missingLines = Number(invoice.linesCount ?? invoice.lines?.length ?? 0) === 0
+
+  if (hasCritical || missingLines) {
+    return {
+      label: 'Manual review',
+      tone: 'danger',
+      indicators: [{ label: hasCritical ? 'Critical error logged' : 'No invoice lines', short: 'MR', tone: 'danger' }],
+    }
+  }
+
+  if (hasWarning || openErrors.length > 0) {
+    return {
+      label: 'Warning',
+      tone: 'warning',
+      indicators: [{ label: 'Open warning or error log for this customer', short: 'W', tone: 'warning' }],
+    }
+  }
+
+  return { label: 'Ready', tone: 'success', indicators: [{ label: 'No open indicators', short: 'OK', tone: 'success' }] }
 }
 
 function SortableHeader({ label, column, sort, onSort }) {
