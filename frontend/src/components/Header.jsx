@@ -1,15 +1,8 @@
 import IconButton from './ui/IconButton.jsx'
-
-const MENU_ITEMS = [
-  { id: 'workspace', label: 'Workspace', roles: ['USER', 'ADMIN'] },
-  { id: 'billing-runs', label: 'Billing runs', roles: ['ADMIN'] },
-  { id: 'reports', label: 'Reports', roles: ['ADMIN'] },
-  { id: 'audit', label: 'Audit', roles: ['ADMIN'] },
-  { id: 'users', label: 'Users', roles: ['ADMIN'] },
-]
+import { APP_CONFIG, NAV_ITEMS } from '../config/appConfig.js'
 
 function Header({ selectedPeriod, theme, user, activeView, onViewChange, onLogout, onToggleTheme }) {
-  const menuItems = MENU_ITEMS.filter((item) => item.roles.includes(user.role))
+  const menuItems = NAV_ITEMS.filter((item) => item.roles.includes(user.role))
 
   return (
     <header className="app-header">
@@ -19,8 +12,8 @@ function Header({ selectedPeriod, theme, user, activeView, onViewChange, onLogou
             MB
           </div>
           <div className="nav-copy">
-            <h1>Mini Billing</h1>
-            <p>Utility invoicing control center</p>
+            <h1>{APP_CONFIG.productName}</h1>
+            <p>{APP_CONFIG.productTagline}</p>
           </div>
         </div>
 

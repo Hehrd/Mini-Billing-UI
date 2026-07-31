@@ -5,8 +5,9 @@ import EmptyState from './ui/EmptyState.jsx'
 import ErrorAlert from './ui/ErrorAlert.jsx'
 import Skeleton from './ui/Skeleton.jsx'
 import { formatMoney, formatNumber } from '../utils/formatters.js'
+import { APP_CONFIG, isAdminRole } from '../config/appConfig.js'
 
-const PAGE_SIZE_OPTIONS = [5, 10, 20]
+const PAGE_SIZE_OPTIONS = APP_CONFIG.pageSizes
 
 function InvoiceTable({
   invoices,
@@ -55,6 +56,7 @@ function InvoiceTable({
   const hasFilters = Boolean(query.trim())
   const isEmpty = !isLoading && invoices.length === 0
   const hasNoResults = !isLoading && invoices.length > 0 && filteredInvoices.length === 0
+  const canStartImport = isAdminRole(user?.role) && typeof onStartImport === 'function'
 
   function updateSort(key) {
     setSort((current) => ({
@@ -83,7 +85,7 @@ function InvoiceTable({
             {isLoading
               ? 'Refreshing invoice data...'
               : `${formatNumber(filteredInvoices.length)} of ${formatNumber(invoices.length)} invoices loaded${
-                  user?.role === 'USER' ? ' for your customer account' : ''
+                  !isAdminRole(user?.role) ? ' for your customer account' : ''
                 }`}
           </p>
         </div>
@@ -141,12 +143,16 @@ function InvoiceTable({
         <EmptyState
           icon={<InvoiceEmptyIcon />}
           title="No invoices for this period"
-          description={`Import source files, configure ${selectedPeriod}, then generate invoices to populate the register.`}
-          action={
+          description={
+            isAdminRole(user?.role)
+              ? `Import source files, configure ${selectedPeriod}, then generate invoices to populate the register.`
+              : `No invoices are available for your account in ${selectedPeriod}.`
+          }
+          action={canStartImport ? (
             <Button type="button" onClick={onStartImport}>
               Go to import workflow
             </Button>
-          }
+          ) : null}
         />
       ) : hasNoResults ? (
         <EmptyState

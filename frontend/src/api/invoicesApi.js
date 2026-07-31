@@ -1,11 +1,7 @@
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:6969').replace(/\/$/, '')
-const AUTH_STORAGE_KEY = 'mini-billing-auth'
+import { APP_CONFIG } from '../config/appConfig.js'
 
-let accessToken = readStoredAuth()?.token || null
-
-export function setAccessToken(token) {
-  accessToken = token || null
-}
+const API_BASE_URL = APP_CONFIG.apiBaseUrl
+const AUTH_STORAGE_KEY = APP_CONFIG.authStorageKey
 
 export function readStoredAuth() {
   if (typeof window === 'undefined') {
@@ -23,8 +19,14 @@ export function storeAuthSession(session) {
   if (typeof window === 'undefined') {
     return
   }
-  window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(session))
-  setAccessToken(session?.token)
+  const persistedSession = session
+    ? {
+        username: session.username,
+        role: session.role,
+        reference: session.reference,
+      }
+    : null
+  window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(persistedSession))
 }
 
 export function clearAuthSession() {
@@ -32,7 +34,6 @@ export function clearAuthSession() {
     return
   }
   window.localStorage.removeItem(AUTH_STORAGE_KEY)
-  setAccessToken(null)
 }
 
 async function request(path, options = {}) {
@@ -42,10 +43,10 @@ async function request(path, options = {}) {
 
   try {
     response = await fetch(`${API_BASE_URL}${path}`, {
+      credentials: 'include',
       headers: {
         Accept: 'application/json',
-        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-        ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+        ...(options.body && !(options.body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}),
         ...options.headers,
       },
       ...options,
@@ -69,30 +70,57 @@ async function request(path, options = {}) {
     return null
   }
 
-  return response.json()
+  return readJsonOrNull(response)
 }
 
 async function readError(response, context) {
-  try {
-    const data = await response.json()
-    return createApiError({
-      title: toErrorTitle(response.status, data),
-      description: data.detail || data.reason || data.title || `Request failed with status ${response.status}.`,
-      kind: response.status === 422 || response.status === 400 ? 'validation' : 'server',
-      status: response.status,
-      serverTitle: data.title,
-      reason: data.reason,
-      ...context,
-    })
-  } catch {
-    return createApiError({
-      title: toErrorTitle(response.status),
-      description: `Request failed with status ${response.status}.`,
-      kind: response.status >= 500 ? 'server' : 'validation',
-      status: response.status,
-      ...context,
-    })
+  const data = await readJsonOrNull(response)
+  const description = toErrorDescription(response.status, data)
+  return createApiError({
+    title: toErrorTitle(response.status, data),
+    description,
+    kind: toErrorKind(response.status),
+    status: response.status,
+    serverTitle: data?.title,
+    reason: data?.reason || data?.detail || description,
+    errors: Array.isArray(data?.errors) ? data.errors : undefined,
+    ...context,
+  })
+}
+
+async function readJsonOrNull(response) {
+  const text = await response.text()
+  if (!text.trim()) {
+    return null
   }
+
+  try {
+    return JSON.parse(text)
+  } catch {
+    return { detail: text }
+  }
+}
+
+function toErrorDescription(status, data) {
+  if (Array.isArray(data?.errors) && data.errors.length) {
+    return data.errors.join('\n')
+  }
+  if (data?.detail || data?.reason || data?.title || data?.message) {
+    return data.detail || data.reason || data.title || data.message
+  }
+  if (status === 401) {
+    return 'Please sign in again. Your session may have expired.'
+  }
+  if (status === 403) {
+    return 'Your account is signed in, but it is not allowed to perform this action.'
+  }
+  if (status === 404) {
+    return 'The requested resource was not found.'
+  }
+  if (status >= 500) {
+    return 'The backend failed while processing the request. Check the server logs for the exact cause.'
+  }
+  return `The request failed with HTTP ${status}.`
 }
 
 function toErrorTitle(status, data = {}) {
@@ -114,7 +142,23 @@ function toErrorTitle(status, data = {}) {
   return data.title || 'Request failed'
 }
 
-function createApiError({ title, description, kind, status, method, path, requestedAt, serverTitle, reason }) {
+function toErrorKind(status) {
+  if (status === 401) {
+    return 'authentication'
+  }
+  if (status === 403) {
+    return 'authorization'
+  }
+  if (status === 400 || status === 422) {
+    return 'validation'
+  }
+  if (status >= 500) {
+    return 'server'
+  }
+  return 'request'
+}
+
+function createApiError({ title, description, kind, status, method, path, requestedAt, serverTitle, reason, errors }) {
   const error = new Error(description)
   error.title = title
   error.description = description
@@ -128,6 +172,7 @@ function createApiError({ title, description, kind, status, method, path, reques
     category: kind,
     serverTitle,
     reason,
+    errors,
   }
   return error
 }
@@ -139,20 +184,36 @@ export async function login({ username, password }) {
   })
 
   return {
-    token: response.token,
-    tokenType: response.tokenType || 'Bearer',
     username: response.username,
     role: response.role,
     reference: response.reference,
   }
 }
 
-export function importCsvFiles() {
-  return request('/api/file/import', { method: 'POST' })
+async function importFileGroup({ type, uploadedBy, files }) {
+  if (!files?.length) {
+    return null
+  }
+  const formData = new FormData()
+  formData.append('type', type)
+  formData.append('uploadedBy', uploadedBy)
+  files.forEach((file) => formData.append('fileImports', file))
+  return request('/api/file/import', {
+    method: 'POST',
+    body: formData,
+    headers: {},
+  })
 }
 
-export function getHealth() {
-  return request('/api/billing/health')
+export async function importCsvFiles({ usersFile, readingsFile, priceFiles, uploadedBy }) {
+  await importFileGroup({ type: 'USERS', uploadedBy, files: usersFile ? [usersFile] : [] })
+  await importFileGroup({ type: 'READINGS', uploadedBy, files: readingsFile ? [readingsFile] : [] })
+  await importFileGroup({ type: 'PRICES', uploadedBy, files: Array.from(priceFiles || []) })
+  return {
+    importedUsers: usersFile ? 1 : 0,
+    importedReadings: readingsFile ? 1 : 0,
+    importedPrices: priceFiles?.length || 0,
+  }
 }
 
 function normalizePage(response) {
@@ -186,16 +247,16 @@ function withPageParams({ page = 0, size = 50, sort, ...filters } = {}) {
   return params.toString()
 }
 
-export async function getInvoices({ userId, page = 0, size = 100, sort = 'documentDate,desc' } = {}) {
+export async function getInvoices({ userId, page = 0, size = 100, sort = 'dateTime,desc' } = {}) {
   const query = withPageParams({ page, size, sort, userId })
   const response = await request(`/api/billing/invoices?${query}`)
   return normalizePage(response).content
 }
 
-export function generateInvoices(year, month) {
-  return request('/api/billing/generate', {
+export function startBillingRun({ startDate, endDate, userId }) {
+  return request('/api/billing/runs', {
     method: 'POST',
-    body: JSON.stringify({ year: Number(year), month: Number(month) }),
+    body: JSON.stringify({ startDate, endDate, userId }),
   })
 }
 

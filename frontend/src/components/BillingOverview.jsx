@@ -3,7 +3,6 @@ import Badge from './ui/Badge.jsx'
 
 function BillingOverview({
   selectedPeriod,
-  healthStatus,
   importSummary,
   invoicesCount,
   isImporting,
@@ -12,10 +11,9 @@ function BillingOverview({
   onImport,
   onGenerate,
 }) {
-  const status = getOverviewStatus({ healthStatus, importSummary, invoicesCount })
+  const status = getOverviewStatus({ importSummary, invoicesCount })
   const imported = Boolean(importSummary)
   const generated = invoicesCount > 0
-  const backendReady = healthStatus === 'connected'
 
   return (
     <section className="overview-panel" aria-labelledby="billing-overview-title">
@@ -30,14 +28,16 @@ function BillingOverview({
         </div>
 
         <div className="overview-actions">
-          <Button type="button" onClick={onImport} disabled={!backendReady || isImporting || !canImport}>
-            {isImporting ? 'Importing' : imported ? 'Re-import CSV files' : 'Import CSV files'}
-          </Button>
+          {canImport && (
+            <Button type="button" onClick={onImport} disabled={isImporting}>
+              {isImporting ? 'Importing' : imported ? 'Re-import CSV files' : 'Import CSV files'}
+            </Button>
+          )}
           <Button
             type="button"
             variant="secondary"
             onClick={onGenerate}
-            disabled={!backendReady || isGenerating || !imported}
+            disabled={isGenerating}
           >
             {isGenerating ? 'Generating' : 'Generate invoices'}
           </Button>
@@ -51,9 +51,9 @@ function BillingOverview({
         </div>
 
         <div className="workflow-strip">
-          <WorkflowStep label="Ready to import" active={!imported && !generated && backendReady} complete={imported} />
-          <WorkflowStep label="Data imported" active={imported && !generated && backendReady} complete={imported} />
-          <WorkflowStep label="Invoices generated" active={generated && backendReady} complete={generated} />
+          <WorkflowStep label="Stored source data" active={!generated} complete={imported} />
+          <WorkflowStep label="Billing period selected" active={!generated} complete />
+          <WorkflowStep label="Invoices generated" active={generated} complete={generated} />
         </div>
 
         <div className="overview-accent" aria-hidden="true">
@@ -75,23 +75,14 @@ function WorkflowStep({ label, active, complete }) {
   )
 }
 
-function getOverviewStatus({ healthStatus, importSummary, invoicesCount }) {
-  if (healthStatus === 'checking') {
-    return { label: 'Checking backend', tone: 'warning' }
-  }
-  if (healthStatus === 'offline') {
-    return { label: 'Backend unavailable', tone: 'danger' }
-  }
-  if (healthStatus !== 'connected') {
-    return { label: 'Backend status unknown', tone: 'warning' }
-  }
+function getOverviewStatus({ importSummary, invoicesCount }) {
   if (invoicesCount > 0) {
     return { label: 'Invoices generated', tone: 'success' }
   }
   if (importSummary) {
     return { label: 'Ready to generate', tone: 'primary' }
   }
-  return { label: 'Ready to import', tone: 'warning' }
+  return { label: importSummary ? 'Ready to generate' : 'Using stored imports', tone: 'primary' }
 }
 
 export default BillingOverview

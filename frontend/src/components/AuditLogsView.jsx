@@ -4,6 +4,7 @@ import Card from './ui/Card.jsx'
 import EmptyState from './ui/EmptyState.jsx'
 import ErrorAlert from './ui/ErrorAlert.jsx'
 import Skeleton from './ui/Skeleton.jsx'
+import { APP_CONFIG, isAdminRole } from '../config/appConfig.js'
 
 const ALL = 'ALL'
 
@@ -11,7 +12,7 @@ function AuditLogsView({ auditLogs, errorLogs, isLoading, error, user, onRefresh
   const [moduleFilter, setModuleFilter] = useState(ALL)
   const [severityFilter, setSeverityFilter] = useState(ALL)
   const [statusFilter, setStatusFilter] = useState(ALL)
-  const readOnly = user?.role !== 'ADMIN'
+  const readOnly = !isAdminRole(user?.role)
 
   const modules = useMemo(() => {
     const values = [...auditLogs, ...errorLogs].map((entry) => entry.module).filter(Boolean)
@@ -34,7 +35,7 @@ function AuditLogsView({ auditLogs, errorLogs, isLoading, error, user, onRefresh
           <div>
             <p className="eyebrow">Audit</p>
             <h2 id="audit-title">Error Logs and Audit Logs</h2>
-            <p>{readOnly ? 'Read-only role mode.' : 'Auditor filters are available for ADMIN users.'}</p>
+            <p>{readOnly ? 'Read-only role mode.' : `Auditor filters are available for ${APP_CONFIG.roles.admin} users.`}</p>
           </div>
           <Button variant="secondary" type="button" onClick={onRefresh} disabled={isLoading}>
             {isLoading ? 'Refreshing' : 'Refresh'}

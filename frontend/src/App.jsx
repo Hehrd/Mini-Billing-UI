@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   downloadInvoice,
-  generateInvoices,
+  startBillingRun,
   clearAuthSession,
-  getHealth,
   getAuditLogs,
   getBillingRunReport,
   getBillingRuns,
@@ -26,33 +25,20 @@ import ReportsView from './components/ReportsView.jsx'
 import AuditLogsView from './components/AuditLogsView.jsx'
 import ErrorAlert from './components/ui/ErrorAlert.jsx'
 import ToastStack from './components/ui/ToastStack.jsx'
-import { formatMoney, formatMonthYear, formatNumber } from './utils/formatters.js'
+import { formatMoney, formatNumber } from './utils/formatters.js'
+import { APP_CONFIG, NAV_ITEMS, isAdminRole } from './config/appConfig.js'
 
-const MONTHS = [
-  { value: 1, label: 'January' },
-  { value: 2, label: 'February' },
-  { value: 3, label: 'March' },
-  { value: 4, label: 'April' },
-  { value: 5, label: 'May' },
-  { value: 6, label: 'June' },
-  { value: 7, label: 'July' },
-  { value: 8, label: 'August' },
-  { value: 9, label: 'September' },
-  { value: 10, label: 'October' },
-  { value: 11, label: 'November' },
-  { value: 12, label: 'December' },
-]
-
-const DEFAULT_YEAR = 2024
-const DEFAULT_MONTH = 3
+const DEFAULT_START_DATE = `${APP_CONFIG.period.defaultYear}-${String(APP_CONFIG.period.defaultMonth).padStart(2, '0')}-01`
+const DEFAULT_END_DATE = new Date(APP_CONFIG.period.defaultYear, APP_CONFIG.period.defaultMonth, 0).toISOString().slice(0, 10)
 
 function App() {
   const [auth, setAuth] = useState(() => readStoredAuth())
   const [loginError, setLoginError] = useState(null)
   const [isLoggingIn, setIsLoggingIn] = useState(false)
   const [activeView, setActiveView] = useState('workspace')
-  const [year, setYear] = useState(DEFAULT_YEAR)
-  const [month, setMonth] = useState(DEFAULT_MONTH)
+  const [startDate, setStartDate] = useState(DEFAULT_START_DATE)
+  const [endDate, setEndDate] = useState(DEFAULT_END_DATE)
+  const [targetUserId, setTargetUserId] = useState('')
   const [invoices, setInvoices] = useState([])
   const [selectedInvoice, setSelectedInvoice] = useState(null)
   const [isInvoicesLoading, setIsInvoicesLoading] = useState(false)
@@ -67,6 +53,7 @@ function App() {
   const [invoiceError, setInvoiceError] = useState(null)
   const [pageError, setPageError] = useState(null)
   const [billingRuns, setBillingRuns] = useState([])
+  const [currentBillingRun, setCurrentBillingRun] = useState(null)
   const [reportsByRunId, setReportsByRunId] = useState({})
   const [reportsError, setReportsError] = useState(null)
   const [isReportsLoading, setIsReportsLoading] = useState(false)
@@ -75,29 +62,25 @@ function App() {
   const [auditError, setAuditError] = useState(null)
   const [isAuditLoading, setIsAuditLoading] = useState(false)
   const [toasts, setToasts] = useState([])
-  const [health, setHealth] = useState({ status: 'checking', message: 'Checking API' })
   const invoiceRequestId = useRef(0)
-  const healthRequestId = useRef(0)
   const [theme, setTheme] = useState(() => {
     if (typeof window === 'undefined') {
       return 'light'
     }
-    const savedTheme = window.localStorage.getItem('mini-billing-theme')
+    const savedTheme = window.localStorage.getItem(APP_CONFIG.themeStorageKey)
     if (savedTheme) {
       return savedTheme
     }
     return window.matchMedia?.('(prefers-color-scheme: dark)')?.matches ? 'dark' : 'light'
   })
 
-  const years = useMemo(() => {
-    return Array.from({ length: 201 }, (_, index) => 1900 + index)
-  }, [])
-
-  const isAdmin = auth?.role === 'ADMIN'
+  const isAdmin = isAdminRole(auth?.role)
+  const generationUserId = isAdmin ? targetUserId.trim() || 'all' : auth?.reference
+  const visibleActiveView = auth && canUseView(activeView, auth.role) ? activeView : 'workspace'
 
   const selectedPeriod = useMemo(() => {
-    return formatMonthYear(month, year, MONTHS)
-  }, [month, year])
+    return startDate && endDate ? `${startDate} to ${endDate}` : '—'
+  }, [endDate, startDate])
 
   const pushToast = useCallback((toast) => {
     const id = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`
@@ -109,39 +92,8 @@ function App() {
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
-    window.localStorage.setItem('mini-billing-theme', theme)
+    window.localStorage.setItem(APP_CONFIG.themeStorageKey, theme)
   }, [theme])
-
-  const loadHealth = useCallback(async () => {
-    const requestId = healthRequestId.current + 1
-    healthRequestId.current = requestId
-    setHealth({ status: 'checking', message: 'Checking API' })
-
-    try {
-      const response = await getHealth()
-      if (requestId !== healthRequestId.current) {
-        return
-      }
-      setHealth({
-        status: response?.status === 'UP' ? 'connected' : 'degraded',
-        message: response?.status === 'UP' ? 'API online' : 'API responded',
-        details: response,
-      })
-    } catch (error) {
-      if (requestId !== healthRequestId.current) {
-        return
-      }
-      if (auth && error.status === 404) {
-        setHealth({ status: 'connected', message: 'API authenticated', details: { healthEndpoint: 'missing' } })
-        return
-      }
-      setHealth({ status: 'offline', message: error.message })
-    }
-  }, [auth])
-
-  useEffect(() => {
-    loadHealth()
-  }, [auth, loadHealth])
 
   const loadInvoices = useCallback(async ({ toastOnSuccess = false } = {}) => {
     const requestId = invoiceRequestId.current + 1
@@ -170,7 +122,7 @@ function App() {
       pushToast({
         type: 'error',
         title: error.title || 'Refresh failed',
-        description: 'The invoice register could not be refreshed.',
+        description: error.description || 'The invoice register could not be refreshed.',
       })
     } finally {
       if (requestId === invoiceRequestId.current) {
@@ -180,7 +132,7 @@ function App() {
   }, [auth?.reference, isAdmin, pushToast, selectedPeriod])
 
   const loadReports = useCallback(async ({ toastOnSuccess = false } = {}) => {
-    if (!guardRole(['ADMIN'], 'Reports are available only to ADMIN users.')) {
+    if (!guardRole([APP_CONFIG.roles.user, APP_CONFIG.roles.admin], 'Reports are available only to signed-in users.')) {
       return
     }
     setIsReportsLoading(true)
@@ -197,7 +149,7 @@ function App() {
       }
     } catch (error) {
       setReportsError(error)
-      pushToast({ type: 'error', title: error.title || 'Reports failed', description: 'The reports screen could not be refreshed.' })
+      pushToast({ type: 'error', title: error.title || 'Reports failed', description: error.description || 'The reports screen could not be refreshed.' })
     } finally {
       setIsReportsLoading(false)
     }
@@ -212,12 +164,12 @@ function App() {
       setReportsByRunId((current) => ({ ...current, [runId]: report }))
     } catch (error) {
       setReportsError(error)
-      pushToast({ type: 'error', title: error.title || 'Report failed', description: `Report ${runId} could not be loaded.` })
+      pushToast({ type: 'error', title: error.title || 'Report failed', description: error.description || `Report ${runId} could not be loaded.` })
     }
   }, [pushToast, reportsByRunId])
 
   const loadAudit = useCallback(async ({ toastOnSuccess = false } = {}) => {
-    if (!guardRole(['ADMIN'], 'Audit screens are available only to ADMIN users.')) {
+    if (!guardRole([APP_CONFIG.roles.admin], `${activeViewLabel('audit')} screens are available only to ${APP_CONFIG.roles.admin} users.`)) {
       return
     }
     setIsAuditLoading(true)
@@ -231,7 +183,7 @@ function App() {
       }
     } catch (error) {
       setAuditError(error)
-      pushToast({ type: 'error', title: error.title || 'Audit failed', description: 'The audit screen could not be refreshed.' })
+      pushToast({ type: 'error', title: error.title || 'Audit failed', description: error.description || 'The audit screen could not be refreshed.' })
     } finally {
       setIsAuditLoading(false)
     }
@@ -240,7 +192,7 @@ function App() {
   useEffect(() => {
     setInvoices([])
     setInvoiceError(null)
-  }, [month, year])
+  }, [endDate, startDate])
 
   useEffect(() => {
     if (!auth) {
@@ -250,13 +202,13 @@ function App() {
   }, [auth, loadInvoices])
 
   useEffect(() => {
-    if (activeView === 'reports' && auth?.role === 'ADMIN') {
+    if (visibleActiveView === 'reports' && isAdminRole(auth?.role)) {
       loadReports()
     }
-    if (activeView === 'audit' && auth?.role === 'ADMIN') {
+    if (visibleActiveView === 'audit' && isAdminRole(auth?.role)) {
       loadAudit()
     }
-  }, [activeView, auth?.role, loadAudit, loadReports])
+  }, [visibleActiveView, auth?.role, loadAudit, loadReports])
 
   const stats = useMemo(() => {
     const totalAmount = invoices.reduce((sum, invoice) => sum + Number(invoice.totalAmount || 0), 0)
@@ -281,8 +233,8 @@ function App() {
     }
   }, [invoices, selectedPeriod])
 
-  async function handleImport() {
-    if (!guardRole(['ADMIN'], 'Only ADMIN users can import source data.')) {
+  async function handleImport(files = {}) {
+    if (!guardRole([APP_CONFIG.roles.admin], `Only ${APP_CONFIG.roles.admin} users can import source data.`)) {
       return
     }
     if (isImporting) {
@@ -295,7 +247,7 @@ function App() {
     setPageError(null)
 
     try {
-      const summary = await importCsvFiles()
+      const summary = await importCsvFiles({ ...files, uploadedBy: auth.reference })
       setImportSummary(summary)
       setImportStatus(
         `Imported ${summary.importedUsers} users, ${summary.importedReadings} readings and ${summary.importedPrices} prices.`,
@@ -311,7 +263,7 @@ function App() {
       pushToast({
         type: 'error',
         title: error.title || 'Import failed',
-        description: 'Review the import panel for details and retry when ready.',
+        description: error.description || 'Review the import panel for details and retry when ready.',
       })
     } finally {
       setIsImporting(false)
@@ -320,10 +272,10 @@ function App() {
 
   async function handleGenerate(event) {
     event?.preventDefault()
-    if (!guardRole(['USER', 'ADMIN'], 'Sign in with a USER or ADMIN account to generate invoices.')) {
+    if (!guardRole([APP_CONFIG.roles.user, APP_CONFIG.roles.admin], `Sign in with a ${APP_CONFIG.roles.user} or ${APP_CONFIG.roles.admin} account to generate invoices.`)) {
       return
     }
-    if (isGenerating || health.status !== 'connected' || Number(year) < 1900 || Number(year) > 2100) {
+    if (isGenerating || !dateRangeIsValid(startDate, endDate)) {
       return
     }
 
@@ -338,16 +290,16 @@ function App() {
     }
 
     try {
-      const result = await generateInvoices(year, month)
+      const result = await startBillingRun({ startDate, endDate, userId: generationUserId })
+      setCurrentBillingRun(result)
+      setBillingRuns((current) => [result, ...current.filter((run) => run.id !== result.id)])
       setGenerateStatus(
-        `Generated ${result.generatedCount} invoice${result.generatedCount === 1 ? '' : 's'}${
-          result.skippedExistingCount ? ` and skipped ${result.skippedExistingCount} existing.` : '.'
-        }`,
+        `Billing Run ${result.id} finished with ${result.processedRecords} processed and ${result.failedRecords} failed.`,
       )
       pushToast({
         type: 'success',
-        title: 'Invoice generation completed',
-        description: `${result.generatedCount} generated, ${result.skippedExistingCount} skipped for ${selectedPeriod}.`,
+        title: 'Billing Run completed',
+        description: `${result.processedRecords} processed, ${result.failedRecords} failed for ${selectedPeriod}.`,
       })
       await loadInvoices()
     } catch (error) {
@@ -355,7 +307,7 @@ function App() {
       pushToast({
         type: 'error',
         title: error.title || 'Generation failed',
-        description: 'The generation panel has the full error details.',
+        description: error.description || 'The generation panel has the full error details.',
       })
     } finally {
       setIsGenerating(false)
@@ -363,7 +315,7 @@ function App() {
   }
 
   async function handleView(documentNumber) {
-    if (!guardRole(['USER', 'ADMIN'], 'Sign in to view invoice details.')) {
+    if (!guardRole([APP_CONFIG.roles.user, APP_CONFIG.roles.admin], 'Sign in to view invoice details.')) {
       return
     }
     setSelectedInvoice(null)
@@ -377,7 +329,7 @@ function App() {
       pushToast({
         type: 'error',
         title: error.title || 'Invoice details unavailable',
-        description: 'The selected invoice could not be opened.',
+        description: error.description || 'The selected invoice could not be opened.',
       })
     } finally {
       setIsDetailsLoading(false)
@@ -385,7 +337,7 @@ function App() {
   }
 
   async function handleDownload(documentNumber) {
-    if (!guardRole(['USER', 'ADMIN'], 'Sign in to download invoices.')) {
+    if (!guardRole([APP_CONFIG.roles.user, APP_CONFIG.roles.admin], 'Sign in to download invoices.')) {
       return
     }
     setPageError(null)
@@ -405,7 +357,7 @@ function App() {
       pushToast({
         type: 'error',
         title: error.title || 'Download failed',
-        description: 'The invoice PDF download could not be started.',
+        description: error.description || 'The invoice PDF download could not be started.',
       })
     }
   }
@@ -430,27 +382,6 @@ function App() {
     URL.revokeObjectURL(url)
   }
 
-  function handlePreviousPeriod() {
-    const current = new Date(Number(year), Number(month) - 1, 1)
-    current.setMonth(current.getMonth() - 1)
-    if (current.getFullYear() < 1900) {
-      return
-    }
-    setYear(current.getFullYear())
-    setMonth(current.getMonth() + 1)
-  }
-
-  function handleNextPeriod() {
-    const current = new Date(Number(year), Number(month) - 1, 1)
-    current.setMonth(current.getMonth() + 1)
-    if (current.getFullYear() > 2100) {
-      return
-    }
-    setYear(current.getFullYear())
-    setMonth(current.getMonth() + 1)
-  }
-
-  const isBackendAvailable = health.status === 'connected'
   const canImport = isAdmin
 
   async function handleLogin(credentials) {
@@ -481,8 +412,10 @@ function App() {
     setInvoices([])
     setSelectedInvoice(null)
     setImportSummary(null)
+    setCurrentBillingRun(null)
     setPageError(null)
     setLoginError(null)
+    setTargetUserId('')
   }
 
   function guardRole(roles, message) {
@@ -499,6 +432,9 @@ function App() {
   }
 
   function focusImportWorkflow() {
+    if (!isAdmin) {
+      return
+    }
     const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches
     document
       .getElementById('billing-workflow-title')
@@ -526,14 +462,18 @@ function App() {
         selectedPeriod={selectedPeriod}
         theme={theme}
         user={auth}
-        activeView={activeView}
-        onViewChange={setActiveView}
+        activeView={visibleActiveView}
+        onViewChange={(view) => {
+          if (canUseView(view, auth.role)) {
+            setActiveView(view)
+          }
+        }}
         onLogout={handleLogout}
         onToggleTheme={() => setTheme((currentTheme) => (currentTheme === 'dark' ? 'light' : 'dark'))}
       />
 
       <main className="dashboard">
-        {activeView === 'reports' ? (
+        {visibleActiveView === 'reports' ? (
           <ReportsView
             billingRuns={billingRuns}
             reportsByRunId={reportsByRunId}
@@ -543,7 +483,7 @@ function App() {
             onSelectRun={loadReport}
             onExport={handleExportReport}
           />
-        ) : activeView === 'audit' ? (
+        ) : visibleActiveView === 'audit' ? (
           <AuditLogsView
             auditLogs={auditLogs}
             errorLogs={errorLogs}
@@ -554,61 +494,56 @@ function App() {
           />
         ) : (
           <>
-          {activeView !== 'workspace' && (
-            <section className="guard-panel" role="status">
-              <strong>{activeViewLabel(activeView)}</strong>
-              <p>This section is available in the ADMIN menu shell. The detailed screen is not implemented yet.</p>
-            </section>
-          )}
-
-          <BillingOverview
-          selectedPeriod={selectedPeriod}
-          healthStatus={health.status}
-          importSummary={importSummary}
-          invoicesCount={invoices.length}
-          isImporting={isImporting}
-          isGenerating={isGenerating}
-          canImport={canImport}
-          onImport={handleImport}
-          onGenerate={() => handleGenerate()}
-        />
+            <BillingOverview
+              selectedPeriod={selectedPeriod}
+              importSummary={importSummary}
+              invoicesCount={invoices.length}
+              isImporting={isImporting}
+              isGenerating={isGenerating}
+              canImport={canImport}
+              onImport={handleImport}
+              onGenerate={() => handleGenerate()}
+            />
 
         {pageError && (
           <ErrorAlert error={pageError.error || pageError} onRetry={pageError.retry || loadInvoices} onDismiss={() => setPageError(null)} />
         )}
 
-        <BillingWorkflow
-          inputDirectory={health.details?.inputDirectory}
-          importSummary={importSummary}
-          importStatus={importStatus}
-          importError={importError}
-          generateStatus={generateStatus}
-          generateError={generateError}
-          isImporting={isImporting}
-          isGenerating={isGenerating}
-          selectedPeriod={selectedPeriod}
-          months={MONTHS}
-          years={years}
-          month={month}
-          year={year}
-          isBackendAvailable={isBackendAvailable}
-          canImport={canImport}
-          invoicesCount={invoices.length}
-          onImport={handleImport}
-          onGenerate={handleGenerate}
-          onMonthChange={setMonth}
-          onYearChange={setYear}
-          onPreviousPeriod={handlePreviousPeriod}
-          onNextPeriod={handleNextPeriod}
-          onDismissImport={() => {
-            setImportStatus(null)
-            setImportError(null)
-          }}
-          onDismissGenerate={() => {
-            setGenerateStatus(null)
-            setGenerateError(null)
-          }}
-        />
+          <BillingWorkflow
+            importSummary={importSummary}
+            importStatus={importStatus}
+            importError={importError}
+            generateStatus={generateStatus}
+            generateError={generateError}
+            billingRun={currentBillingRun}
+            isImporting={isImporting}
+            isGenerating={isGenerating}
+            selectedPeriod={selectedPeriod}
+            startDate={startDate}
+            endDate={endDate}
+            targetUserId={targetUserId}
+            currentUserReference={auth.reference}
+            isAdmin={isAdmin}
+            canImport={canImport}
+            invoicesCount={invoices.length}
+            onImport={handleImport}
+            onBillingRunAction={(action) => {
+              if (action === 'START' || action === 'RESTART') {
+                handleGenerate()
+              }
+            }}
+            onStartDateChange={setStartDate}
+            onEndDateChange={setEndDate}
+            onTargetUserIdChange={setTargetUserId}
+            onDismissImport={() => {
+              setImportStatus(null)
+              setImportError(null)
+            }}
+            onDismissGenerate={() => {
+              setGenerateStatus(null)
+              setGenerateError(null)
+            }}
+          />
 
         <StatsCards stats={stats} isLoading={isInvoicesLoading} />
 
@@ -622,7 +557,7 @@ function App() {
           onRefresh={() => loadInvoices({ toastOnSuccess: true })}
           onView={handleView}
           onDownload={handleDownload}
-          onStartImport={focusImportWorkflow}
+          onStartImport={isAdmin ? focusImportWorkflow : null}
           onClearError={() => setInvoiceError(null)}
         />
           </>
@@ -652,6 +587,22 @@ function activeViewLabel(activeView) {
     audit: 'Audit',
     users: 'Users',
   }[activeView] || 'Workspace'
+}
+
+function canUseView(view, role) {
+  return NAV_ITEMS.some((item) => item.id === view && item.roles.includes(role))
+}
+
+function dateRangeIsValid(startDate, endDate) {
+  if (!startDate || !endDate) {
+    return false
+  }
+  const start = new Date(`${startDate}T00:00:00`)
+  const end = new Date(`${endDate}T00:00:00`)
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    return false
+  }
+  return end >= start
 }
 
 export default App

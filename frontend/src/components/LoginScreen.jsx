@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import Button from './ui/Button.jsx'
 import ErrorAlert from './ui/ErrorAlert.jsx'
+import { APP_CONFIG } from '../config/appConfig.js'
 
 function LoginScreen({ error, isLoading, theme, onLogin, onToggleTheme }) {
-  const [username, setUsername] = useState('admin')
-  const [password, setPassword] = useState('admin')
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
 
   function handleSubmit(event) {
     event.preventDefault()
@@ -19,7 +20,7 @@ function LoginScreen({ error, isLoading, theme, onLogin, onToggleTheme }) {
             MB
           </div>
           <div>
-            <p className="eyebrow">Mini Billing</p>
+            <p className="eyebrow">{APP_CONFIG.productName}</p>
             <h1 id="login-title">Sign in</h1>
           </div>
         </div>

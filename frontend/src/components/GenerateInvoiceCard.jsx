@@ -5,40 +5,35 @@ import Card from './ui/Card.jsx'
 import ErrorAlert from './ui/ErrorAlert.jsx'
 import FormField from './ui/FormField.jsx'
 import { formatDateTime, formatNumber } from '../utils/formatters.js'
+import { APP_CONFIG } from '../config/appConfig.js'
 
-const FR_09_STATUSES = ['NOT_STARTED', 'IN_PROGRESS', 'PAUSED', 'COMPLETED', 'FAILED']
+const BILLING_RUN_STATUSES = ['NOT_STARTED', 'IN_PROGRESS', 'PAUSED', 'COMPLETED', 'FAILED']
 
 function GenerateInvoiceCard({
-  months,
-  years,
-  month,
-  year,
+  startDate,
+  endDate,
+  targetUserId,
+  currentUserReference,
+  isAdmin,
   selectedPeriod,
   hasImportedData,
-  importReadiness,
   hasInvoices,
   status,
   error,
   billingRun,
   isLoading,
-  isBackendAvailable,
-  onMonthChange,
-  onYearChange,
-  onPreviousPeriod,
-  onNextPeriod,
+  onStartDateChange,
+  onEndDateChange,
+  onTargetUserIdChange,
   onBillingRunAction,
   onDismiss,
 }) {
-  const yearIsSupported = Number(year) >= 1900 && Number(year) <= 2100
-  const monthIsSupported = Number(month) >= 1 && Number(month) <= 12
-  const periodIsValid = yearIsSupported && monthIsSupported
-  const canGenerate = isBackendAvailable && hasImportedData && periodIsValid && !isLoading
+  const periodIsValid = dateRangeIsValid(startDate, endDate)
+  const canGenerate = periodIsValid && !isLoading
   const runStatus = billingRun?.status || 'NOT_STARTED'
   const progressTotal = Number(billingRun?.totalRecords || 0)
   const progressDone = Number(billingRun?.processedRecords || 0) + Number(billingRun?.failedRecords || 0)
   const progressPercent = progressTotal > 0 ? Math.min(100, Math.round((progressDone / progressTotal) * 100)) : 0
-  const isFirstSupportedPeriod = Number(year) === 1900 && Number(month) === 1
-  const isLastSupportedPeriod = Number(year) === 2100 && Number(month) === 12
 
   function handleSubmit(event) {
     event.preventDefault()
@@ -52,62 +47,74 @@ function GenerateInvoiceCard({
       <div className="period-config-section">
         <div className="card-header">
           <div>
-            <p className="eyebrow">Step 2</p>
+            <p className="eyebrow">Step 1</p>
             <h2>Configure billing period</h2>
-            <p>Select the month and year for the invoice generation run.</p>
+            <p>Select the date range for the invoice generation run.</p>
           </div>
         </div>
 
         <form className="period-form" onSubmit={handleSubmit}>
           <div className="period-controls">
-            <Button variant="secondary" type="button" onClick={onPreviousPeriod} disabled={isLoading || isFirstSupportedPeriod}>
-              Previous
-            </Button>
-
-            <FormField label="Month">
-              <select value={month} onChange={(event) => onMonthChange(Number(event.target.value))}>
-                {months.map((monthOption) => (
-                  <option key={monthOption.value} value={monthOption.value}>
-                    {monthOption.label}
-                  </option>
-                ))}
-              </select>
+            <FormField label="Start date">
+              <input
+                type="date"
+                min={`${APP_CONFIG.period.minYear}-01-01`}
+                max={`${APP_CONFIG.period.maxYear}-12-31`}
+                value={startDate}
+                onChange={(event) => onStartDateChange(event.target.value)}
+                disabled={isLoading}
+              />
             </FormField>
 
-            <FormField label="Year" helperText="Supported range: 1900-2100">
-              <select value={year} onChange={(event) => onYearChange(Number(event.target.value))}>
-                {years.map((yearOption) => (
-                  <option key={yearOption} value={yearOption}>
-                    {yearOption}
-                  </option>
-                ))}
-              </select>
+            <FormField label="End date" helperText={`Supported range: ${APP_CONFIG.period.minYear}-${APP_CONFIG.period.maxYear}`}>
+              <input
+                type="date"
+                min={`${APP_CONFIG.period.minYear}-01-01`}
+                max={`${APP_CONFIG.period.maxYear}-12-31`}
+                value={endDate}
+                onChange={(event) => onEndDateChange(event.target.value)}
+                disabled={isLoading}
+              />
             </FormField>
-
-            <Button variant="secondary" type="button" onClick={onNextPeriod} disabled={isLoading || isLastSupportedPeriod}>
-              Next
-            </Button>
           </div>
 
           <div className="selected-period-summary">
             <span>Selected billing period</span>
             <strong>{selectedPeriod}</strong>
-            {!periodIsValid && <p>Choose a month from 1-12 and year from 1900-2100.</p>}
+            {!periodIsValid && <p>Choose a valid date range where the end date is not before the start date.</p>}
           </div>
         </form>
+
+        <div className="generation-target">
+          {isAdmin ? (
+            <FormField label="Customer ID" helperText="Leave empty or enter all to generate for every customer.">
+              <input
+                type="text"
+                value={targetUserId}
+                placeholder="all"
+                onChange={(event) => onTargetUserIdChange(event.target.value)}
+                disabled={isLoading}
+              />
+            </FormField>
+          ) : (
+            <FormField label="Customer ID">
+              <input type="text" value={currentUserReference || ''} disabled readOnly />
+            </FormField>
+          )}
+        </div>
       </div>
 
       <div className="generation-section">
         <div className="card-header">
           <div>
-            <p className="eyebrow">Step 3</p>
-            <h2>Generate and review invoices</h2>
-            <p>Confirm readiness, generate invoice documents, then review the refreshed invoice register.</p>
+            <p className="eyebrow">Step 2</p>
+            <h2>Start Billing Run and review invoices</h2>
+            <p>Confirm readiness, start the Billing Run, then review the refreshed invoice register.</p>
           </div>
         </div>
 
         <div className="generation-confirmation">
-          <span>Generation period</span>
+          <span>Billing Run period</span>
           <strong>{selectedPeriod}</strong>
         </div>
 
@@ -123,7 +130,7 @@ function GenerateInvoiceCard({
           </div>
 
           <div className="billing-run-status-strip" aria-label="Billing run statuses">
-            {FR_09_STATUSES.map((item) => (
+            {BILLING_RUN_STATUSES.map((item) => (
               <span className={item === runStatus ? 'active' : ''} key={item}>
                 {item.replace('_', ' ')}
               </span>
@@ -182,18 +189,10 @@ function GenerateInvoiceCard({
         </section>
 
         <ul className="readiness-list" aria-label="Generation readiness checklist">
-          <ChecklistItem complete={isBackendAvailable} label="Backend API is reachable" />
-          <ChecklistItem complete={hasImportedData} label="Customers, usage, and tariffs imports are valid" />
-          <ChecklistItem complete={(importReadiness?.blockingValidationCount || 0) === 0} label="No blocking validation errors remain" />
+          <ChecklistItem complete label={hasImportedData ? 'Current session imports are loaded' : 'Stored imports will be used'} />
           <ChecklistItem complete={periodIsValid} label="Billing period is supported" />
-          <ChecklistItem complete={!isLoading} label="No generation request is already running" />
+          <ChecklistItem complete={!isLoading} label="No Billing Run request is already running" />
         </ul>
-
-        {!hasImportedData && (
-          <Alert type="info" title="Billing run is blocked">
-            {toReadinessMessage(importReadiness)}
-          </Alert>
-        )}
 
         {hasInvoices && (
           <Alert type="info" title="Existing invoices loaded">
@@ -204,7 +203,7 @@ function GenerateInvoiceCard({
       </div>
 
       {status && (
-        <Alert type="success" title="Generation completed" onDismiss={onDismiss}>
+        <Alert type="success" title="Billing Run completed" onDismiss={onDismiss}>
           {status}
         </Alert>
       )}
@@ -222,31 +221,6 @@ function RunMetric({ label, value }) {
   )
 }
 
-function toReadinessMessage(readiness) {
-  if (!readiness) {
-    return 'Import all required source files before generating invoices.'
-  }
-
-  const messages = []
-  if (readiness.missingFiles?.length > 0) {
-    messages.push(`Missing required imports: ${readiness.missingFiles.map(toImportLabel).join(', ')}.`)
-  }
-  if (readiness.blockingValidationCount > 0) {
-    messages.push(`${readiness.blockingValidationCount} blocking validation error${readiness.blockingValidationCount === 1 ? '' : 's'} must be fixed.`)
-  }
-
-  return messages.join(' ') || 'Import all required source files before generating invoices.'
-}
-
-function toImportLabel(sourceType) {
-  const labels = {
-    CUSTOMERS: 'Customers',
-    USAGE: 'Usage',
-    TARIFFS: 'Tariffs',
-  }
-  return labels[sourceType] || sourceType
-}
-
 function ChecklistItem({ complete, label }) {
   return (
     <li className={complete ? 'complete' : 'pending'}>
@@ -254,6 +228,18 @@ function ChecklistItem({ complete, label }) {
       {label}
     </li>
   )
+}
+
+function dateRangeIsValid(startDate, endDate) {
+  if (!startDate || !endDate) {
+    return false
+  }
+  const start = new Date(`${startDate}T00:00:00`)
+  const end = new Date(`${endDate}T00:00:00`)
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    return false
+  }
+  return end >= start
 }
 
 export default GenerateInvoiceCard

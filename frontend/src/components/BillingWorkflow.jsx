@@ -2,7 +2,6 @@ import ImportCard from './ImportCard.jsx'
 import GenerateInvoiceCard from './GenerateInvoiceCard.jsx'
 
 function BillingWorkflow({
-  inputDirectory,
   importSummary,
   importStatus,
   importError,
@@ -14,38 +13,31 @@ function BillingWorkflow({
   isImporting,
   isGenerating,
   selectedPeriod,
-  months,
-  years,
-  month,
-  year,
-  isBackendAvailable,
+  startDate,
+  endDate,
+  targetUserId,
+  currentUserReference,
+  isAdmin,
   canImport,
   invoicesCount,
-  importReadiness,
   onImport,
   onBillingRunAction,
-  onMonthChange,
-  onYearChange,
-  onPreviousPeriod,
-  onNextPeriod,
+  onStartDateChange,
+  onEndDateChange,
+  onTargetUserIdChange,
   onDismissImport,
   onDismissGenerate,
 }) {
-  const hasImportedData = Boolean(importReadiness?.isReady)
+  const hasImportedData = Boolean(importSummary)
   const hasInvoices = invoicesCount > 0
   const steps = [
-    getStepState('Import source data', {
-      failed: Boolean(importError),
-      active: !hasImportedData,
-      complete: hasImportedData,
-    }),
     getStepState('Configure billing period', {
-      active: hasImportedData && !hasInvoices,
-      complete: hasImportedData,
+      active: !hasInvoices,
+      complete: true,
     }),
     getStepState('Generate and review invoices', {
       failed: Boolean(generateError),
-      active: hasImportedData && !hasInvoices,
+      active: !hasInvoices,
       complete: hasInvoices,
     }),
   ]
@@ -56,7 +48,7 @@ function BillingWorkflow({
         <div>
           <p className="eyebrow">Guided workflow</p>
           <h2 id="billing-workflow-title">Billing run setup</h2>
-          <p>Move through the billing run in order: import source data, confirm the period, then generate invoices.</p>
+          <p>Choose a billing period and generate invoices from stored customer, usage, and tariff data.</p>
         </div>
       </div>
 
@@ -73,38 +65,36 @@ function BillingWorkflow({
       </ol>
 
       <div className="workflow-grid">
-        <ImportCard
-          inputDirectory={inputDirectory}
-          summary={importSummary}
-          status={importStatus}
-          error={importError}
-          importStatuses={importStatuses}
-          validationResults={validationResults}
-          isLoading={isImporting}
-          isBackendAvailable={isBackendAvailable}
-          canImport={canImport}
-          onImport={onImport}
-          onDismiss={onDismissImport}
-        />
+        {canImport && (
+          <ImportCard
+            summary={importSummary}
+            status={importStatus}
+            error={importError}
+            importStatuses={importStatuses}
+            validationResults={validationResults}
+            isLoading={isImporting}
+            canImport={canImport}
+            onImport={onImport}
+            onDismiss={onDismissImport}
+          />
+        )}
 
         <GenerateInvoiceCard
-          months={months}
-          years={years}
-          month={month}
-          year={year}
+          startDate={startDate}
+          endDate={endDate}
+          targetUserId={targetUserId}
+          currentUserReference={currentUserReference}
+          isAdmin={isAdmin}
           selectedPeriod={selectedPeriod}
           hasImportedData={hasImportedData}
-          importReadiness={importReadiness}
           hasInvoices={hasInvoices}
           status={generateStatus}
           error={generateError}
           billingRun={billingRun}
           isLoading={isGenerating}
-          isBackendAvailable={isBackendAvailable}
-          onMonthChange={onMonthChange}
-          onYearChange={onYearChange}
-          onPreviousPeriod={onPreviousPeriod}
-          onNextPeriod={onNextPeriod}
+          onStartDateChange={onStartDateChange}
+          onEndDateChange={onEndDateChange}
+          onTargetUserIdChange={onTargetUserIdChange}
           onBillingRunAction={onBillingRunAction}
           onDismiss={onDismissGenerate}
         />
