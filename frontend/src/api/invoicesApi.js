@@ -1,4 +1,4 @@
-import { APP_CONFIG } from '../config/appConfig.js'
+import { APP_CONFIG, normalizeRole } from '../config/appConfig.js'
 
 const API_BASE_URL = APP_CONFIG.apiBaseUrl
 const AUTH_STORAGE_KEY = APP_CONFIG.authStorageKey
@@ -9,7 +9,8 @@ export function readStoredAuth() {
   }
 
   try {
-    return JSON.parse(window.localStorage.getItem(AUTH_STORAGE_KEY))
+    const session = JSON.parse(window.localStorage.getItem(AUTH_STORAGE_KEY))
+    return session ? { ...session, role: normalizeRole(session.role) } : null
   } catch {
     return null
   }
@@ -22,7 +23,7 @@ export function storeAuthSession(session) {
   const persistedSession = session
     ? {
         username: session.username,
-        role: session.role,
+        role: normalizeRole(session.role),
         reference: session.reference,
       }
     : null
@@ -185,30 +186,46 @@ export async function login({ username, password }) {
 
   return {
     username: response.username,
-    role: response.role,
+    role: normalizeRole(response.role),
     reference: response.reference,
   }
 }
 
-async function importFileGroup({ type, uploadedBy, files }) {
-  if (!files?.length) {
-    return null
-  }
-  const formData = new FormData()
-  formData.append('type', type)
-  formData.append('uploadedBy', uploadedBy)
-  files.forEach((file) => formData.append('fileImports', file))
-  return request('/api/file/import', {
-    method: 'POST',
-    body: formData,
-    headers: {},
+function appendFileEntries(formData, entries) {
+  entries.forEach((entry, index) => {
+    formData.append(`files[${index}].type`, entry.type)
+    formData.append(`files[${index}].file`, entry.file)
   })
 }
 
 export async function importCsvFiles({ usersFile, readingsFile, priceFiles, uploadedBy }) {
-  await importFileGroup({ type: 'USERS', uploadedBy, files: usersFile ? [usersFile] : [] })
-  await importFileGroup({ type: 'READINGS', uploadedBy, files: readingsFile ? [readingsFile] : [] })
-  await importFileGroup({ type: 'PRICES', uploadedBy, files: Array.from(priceFiles || []) })
+  const entries = [
+    ...(usersFile ? [{ type: 'USERS', file: usersFile }] : []),
+    ...(readingsFile ? [{ type: 'READINGS', file: readingsFile }] : []),
+    ...Array.from(priceFiles || []).map((file) => ({ type: 'PRICES', file })),
+  ]
+
+  if (!entries.length) {
+    throw createApiError({
+      title: 'No files selected',
+      description: 'Select at least one users, readings, or prices file to import.',
+      kind: 'validation',
+      method: 'POST',
+      path: '/api/file/import',
+      requestedAt: new Date().toISOString(),
+    })
+  }
+
+  const formData = new FormData()
+  formData.append('uploadedBy', uploadedBy)
+  appendFileEntries(formData, entries)
+
+  await request('/api/file/import', {
+    method: 'POST',
+    body: formData,
+    headers: {},
+  })
+
   return {
     importedUsers: usersFile ? 1 : 0,
     importedReadings: readingsFile ? 1 : 0,
@@ -247,16 +264,63 @@ function withPageParams({ page = 0, size = 50, sort, ...filters } = {}) {
   return params.toString()
 }
 
-export async function getInvoices({ userId, page = 0, size = 100, sort = 'dateTime,desc' } = {}) {
-  const query = withPageParams({ page, size, sort, userId })
+export async function getInvoices({ reference, page = 0, size = 100, sort = 'dateTime,desc' } = {}) {
+  const query = withPageParams({ page, size, sort, reference })
   const response = await request(`/api/billing/invoices?${query}`)
   return normalizePage(response).content
 }
 
-export function startBillingRun({ startDate, endDate, userId }) {
+export async function getReadings({ reference, page = 0, size = 200, sort = 'dateTime,desc' } = {}) {
+  const query = withPageParams({ page, size, sort, reference })
+  return normalizePage(await request(`/api/billing/readings?${query}`)).content
+}
+
+export async function getReadingSelfReports({ reference, page = 0, size = 100, sort = 'requestedAt,desc' } = {}) {
+  const query = withPageParams({ page, size, sort, reference })
+  return normalizePage(await request(`/api/billing/readings/self-reports?${query}`)).content
+}
+
+export function createReadingSelfReport({ date, service, amount }) {
+  return request('/api/billing/readings/self-reports', {
+    method: 'POST',
+    body: JSON.stringify({ date, service, amount: Number(amount) }),
+  })
+}
+
+export function acceptReadingSelfReport(requestId) {
+  return request(`/api/billing/readings/self-reports/${encodeURIComponent(requestId)}/accept`, {
+    method: 'POST',
+  })
+}
+
+export function denyReadingSelfReport(requestId) {
+  return request(`/api/billing/readings/self-reports/${encodeURIComponent(requestId)}/deny`, {
+    method: 'POST',
+  })
+}
+
+export function startBillingRun({ startDate, endDate, reference }) {
   return request('/api/billing/runs', {
     method: 'POST',
-    body: JSON.stringify({ startDate, endDate, userId }),
+    body: JSON.stringify({ startDate, endDate, reference }),
+  })
+}
+
+export function stopBillingRun(runId) {
+  return request(`/api/billing/runs/${encodeURIComponent(runId)}/stop`, {
+    method: 'POST',
+  })
+}
+
+export function resumeBillingRun(runId) {
+  return request(`/api/billing/runs/${encodeURIComponent(runId)}/resume`, {
+    method: 'POST',
+  })
+}
+
+export function restartBillingRun(runId) {
+  return request(`/api/billing/runs/${encodeURIComponent(runId)}/restart`, {
+    method: 'POST',
   })
 }
 
@@ -360,9 +424,9 @@ export function getBillingRunReport(runId) {
 }
 
 export async function getAuditLogs({ page = 0, size = 50, sort = 'occurredAt,desc' } = {}) {
-  return normalizePage(await request(`/api/audit/logs?${withPageParams({ page, size, sort })}`))
+  return normalizePage(await request(`/api/logs/audit?${withPageParams({ page, size, sort })}`))
 }
 
 export async function getErrorLogs({ page = 0, size = 50, sort = 'occurredAt,desc' } = {}) {
-  return normalizePage(await request(`/api/audit/errors?${withPageParams({ page, size, sort })}`))
+  return normalizePage(await request(`/api/logs/errors?${withPageParams({ page, size, sort })}`))
 }

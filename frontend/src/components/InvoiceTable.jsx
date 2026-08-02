@@ -102,7 +102,7 @@ function InvoiceTable({
             type="search"
             value={query}
             onChange={(event) => handleSearch(event.target.value)}
-            placeholder="Document, customer or reference"
+            placeholder="Document, customer or user ID"
           />
         </label>
 

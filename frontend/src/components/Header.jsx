@@ -1,8 +1,8 @@
 import IconButton from './ui/IconButton.jsx'
-import { APP_CONFIG, NAV_ITEMS } from '../config/appConfig.js'
+import { APP_CONFIG, NAV_ITEMS, hasRole } from '../config/appConfig.js'
 
 function Header({ selectedPeriod, theme, user, activeView, onViewChange, onLogout, onToggleTheme }) {
-  const menuItems = NAV_ITEMS.filter((item) => item.roles.includes(user.role))
+  const menuItems = NAV_ITEMS.filter((item) => hasRole(user.role, item.roles))
 
   return (
     <header className="app-header">

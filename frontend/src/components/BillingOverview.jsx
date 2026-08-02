@@ -8,6 +8,7 @@ function BillingOverview({
   isImporting,
   isGenerating,
   canImport,
+  canGenerate,
   onImport,
   onGenerate,
 }) {
@@ -30,17 +31,19 @@ function BillingOverview({
         <div className="overview-actions">
           {canImport && (
             <Button type="button" onClick={onImport} disabled={isImporting}>
-              {isImporting ? 'Importing' : imported ? 'Re-import CSV files' : 'Import CSV files'}
+              {isImporting ? 'Importing' : 'Import files'}
             </Button>
           )}
-          <Button
-            type="button"
-            variant="secondary"
-            onClick={onGenerate}
-            disabled={isGenerating}
-          >
-            {isGenerating ? 'Generating' : 'Generate invoices'}
-          </Button>
+          {canGenerate && (
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={onGenerate}
+              disabled={isGenerating}
+            >
+              {isGenerating ? 'Generating' : 'Generate invoices'}
+            </Button>
+          )}
         </div>
       </div>
 

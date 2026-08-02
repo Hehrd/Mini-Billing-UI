@@ -15,7 +15,7 @@ function BillingWorkflow({
   selectedPeriod,
   startDate,
   endDate,
-  targetUserId,
+  targetUserReference,
   currentUserReference,
   isAdmin,
   canImport,
@@ -82,7 +82,7 @@ function BillingWorkflow({
         <GenerateInvoiceCard
           startDate={startDate}
           endDate={endDate}
-          targetUserId={targetUserId}
+          targetUserReference={targetUserReference}
           currentUserReference={currentUserReference}
           isAdmin={isAdmin}
           selectedPeriod={selectedPeriod}

@@ -11,7 +11,7 @@ function ImportCard({ summary, status, error, isLoading, canImport, onImport, on
   const [usersFile, setUsersFile] = useState(null)
   const [readingsFile, setReadingsFile] = useState(null)
   const [priceFiles, setPriceFiles] = useState([])
-  const hasRequiredFiles = Boolean(usersFile && readingsFile && priceFiles.length > 0)
+  const hasSelectedFiles = Boolean(usersFile || readingsFile || priceFiles.length > 0)
 
   function handleImport() {
     onImport({ usersFile, readingsFile, priceFiles })
@@ -28,7 +28,7 @@ function ImportCard({ summary, status, error, isLoading, canImport, onImport, on
       </div>
 
       <div className="source-panel">
-        <ul className="source-list" aria-label="Expected CSV source categories">
+        <ul className="source-list" aria-label="Expected source file names">
           <li>customer_data.csv</li>
           <li>usage_data.csv</li>
           <li>tariff_plans.csv</li>
@@ -37,21 +37,21 @@ function ImportCard({ summary, status, error, isLoading, canImport, onImport, on
 
       <div className="import-file-grid">
         <label>
-          <span>Users file</span>
+          <span>customer_data file</span>
           <input type="file" accept=".csv,.xlsx" onChange={(event) => setUsersFile(event.target.files?.[0] || null)} />
         </label>
         <label>
-          <span>Readings file</span>
+          <span>usage_data file</span>
           <input type="file" accept=".csv,.xlsx" onChange={(event) => setReadingsFile(event.target.files?.[0] || null)} />
         </label>
         <label>
-          <span>Price files</span>
+          <span>tariff_plans file</span>
           <input type="file" accept=".csv,.xlsx" multiple onChange={(event) => setPriceFiles(Array.from(event.target.files || []))} />
         </label>
       </div>
 
-      <Button type="button" onClick={handleImport} disabled={isLoading || isLocked || !hasRequiredFiles}>
-        {isLoading ? <LoadingSpinner label="Importing source data" /> : isLocked ? `${APP_CONFIG.roles.admin} required` : 'Import CSV Files'}
+      <Button type="button" onClick={handleImport} disabled={isLoading || isLocked || !hasSelectedFiles}>
+        {isLoading ? <LoadingSpinner label="Importing source data" /> : isLocked ? `${APP_CONFIG.roles.admin} required` : 'Import files'}
       </Button>
 
       {isLocked && (
@@ -63,7 +63,7 @@ function ImportCard({ summary, status, error, isLoading, canImport, onImport, on
       {isLoading && (
         <div className="progress-note" role="status">
           <span className="progress-bar" aria-hidden="true" />
-          Reading configured CSV files and storing validated rows.
+          Reading configured files and storing validated rows.
         </div>
       )}
 
@@ -72,12 +72,12 @@ function ImportCard({ summary, status, error, isLoading, canImport, onImport, on
           {status}
         </Alert>
       )}
-      <ErrorAlert error={error} onRetry={hasRequiredFiles ? handleImport : null} onDismiss={onDismiss} />
+      <ErrorAlert error={error} onRetry={hasSelectedFiles ? handleImport : null} onDismiss={onDismiss} />
 
       <div className="mini-metrics">
-        <Metric label="Users" value={summary?.importedUsers ?? '—'} />
-        <Metric label="Readings" value={summary?.importedReadings ?? '—'} />
-        <Metric label="Prices" value={summary?.importedPrices ?? '—'} />
+        <Metric label="customer_data" value={summary?.importedUsers ?? '—'} />
+        <Metric label="usage_data" value={summary?.importedReadings ?? '—'} />
+        <Metric label="tariff_plans" value={summary?.importedPrices ?? '—'} />
         <Metric label="Skipped" value={summary?.skippedDuplicates ?? '—'} />
       </div>
 

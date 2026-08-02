@@ -24,13 +24,14 @@ export const APP_CONFIG = {
     defaultYear: integerFromEnv('VITE_DEFAULT_BILLING_YEAR', currentDate.getFullYear()),
     defaultMonth: integerFromEnv('VITE_DEFAULT_BILLING_MONTH', currentDate.getMonth() + 1),
   },
-  pageSizes: [5, 10, 20],
+  pageSizes: [10, 20, 50, 100],
 }
 
 export const NAV_ITEMS = [
-  { id: 'workspace', label: 'Workspace', roles: [ROLE_USER, ROLE_ADMIN] },
-  { id: 'reports', label: 'Reports', roles: [ROLE_USER, ROLE_ADMIN] },
-  { id: 'audit', label: 'Audit', roles: [ROLE_ADMIN] },
+  { id: 'invoices', label: 'Invoices', roles: [ROLE_USER, ROLE_ADMIN] },
+  { id: 'readings', label: 'Readings', roles: [ROLE_USER, ROLE_ADMIN] },
+  { id: 'reports', label: 'Reports', roles: [ROLE_ADMIN] },
+  { id: 'logs', label: 'Logs', roles: [ROLE_ADMIN] },
 ]
 
 export const MONTH_OPTIONS = Array.from({ length: 12 }, (_, index) => {
@@ -40,9 +41,20 @@ export const MONTH_OPTIONS = Array.from({ length: 12 }, (_, index) => {
 })
 
 export function isAdminRole(role) {
-  return role === APP_CONFIG.roles.admin
+  return normalizeRole(role) === APP_CONFIG.roles.admin
 }
 
-export function canUseWorkspace(role) {
-  return role === APP_CONFIG.roles.user || role === APP_CONFIG.roles.admin
+export function canUseInvoices(role) {
+  return hasRole(role, [APP_CONFIG.roles.user, APP_CONFIG.roles.admin])
+}
+
+export function hasRole(role, allowedRoles) {
+  return allowedRoles.includes(normalizeRole(role))
+}
+
+export function normalizeRole(role) {
+  return String(role || '')
+    .trim()
+    .toUpperCase()
+    .replace(/^ROLE_/, '')
 }

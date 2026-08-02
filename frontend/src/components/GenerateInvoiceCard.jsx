@@ -12,7 +12,7 @@ const BILLING_RUN_STATUSES = ['NOT_STARTED', 'IN_PROGRESS', 'PAUSED', 'COMPLETED
 function GenerateInvoiceCard({
   startDate,
   endDate,
-  targetUserId,
+  targetUserReference,
   currentUserReference,
   isAdmin,
   selectedPeriod,
@@ -29,7 +29,7 @@ function GenerateInvoiceCard({
   onDismiss,
 }) {
   const periodIsValid = dateRangeIsValid(startDate, endDate)
-  const canGenerate = periodIsValid && !isLoading
+  const canGenerate = isAdmin && periodIsValid && !isLoading
   const runStatus = billingRun?.status || 'NOT_STARTED'
   const progressTotal = Number(billingRun?.totalRecords || 0)
   const progressDone = Number(billingRun?.processedRecords || 0) + Number(billingRun?.failedRecords || 0)
@@ -66,7 +66,7 @@ function GenerateInvoiceCard({
               />
             </FormField>
 
-            <FormField label="End date" helperText={`Supported range: ${APP_CONFIG.period.minYear}-${APP_CONFIG.period.maxYear}`}>
+            <FormField label="End date">
               <input
                 type="date"
                 min={`${APP_CONFIG.period.minYear}-01-01`}
@@ -90,7 +90,7 @@ function GenerateInvoiceCard({
             <FormField label="Customer ID" helperText="Leave empty or enter all to generate for every customer.">
               <input
                 type="text"
-                value={targetUserId}
+                value={targetUserReference}
                 placeholder="all"
                 onChange={(event) => onTargetUserIdChange(event.target.value)}
                 disabled={isLoading}
@@ -189,6 +189,7 @@ function GenerateInvoiceCard({
         </section>
 
         <ul className="readiness-list" aria-label="Generation readiness checklist">
+          <ChecklistItem complete={isAdmin} label="Signed in with an admin account" />
           <ChecklistItem complete label={hasImportedData ? 'Current session imports are loaded' : 'Stored imports will be used'} />
           <ChecklistItem complete={periodIsValid} label="Billing period is supported" />
           <ChecklistItem complete={!isLoading} label="No Billing Run request is already running" />

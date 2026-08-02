@@ -6,7 +6,7 @@ import ErrorAlert from './ui/ErrorAlert.jsx'
 import Skeleton from './ui/Skeleton.jsx'
 import { formatNumber } from '../utils/formatters.js'
 
-function ReportsView({ billingRuns, reportsByRunId, isLoading, error, onRefresh, onSelectRun, onExport }) {
+function ReportsView({ billingRuns, reportsByRunId, isLoading, error, onRefresh, onSelectRun, onExport, onRunAction, actionInProgress }) {
   const [selectedRunId, setSelectedRunId] = useState('')
   const selectedRun = useMemo(
     () => billingRuns.find((run) => run.id === selectedRunId) || billingRuns[0],
@@ -84,21 +84,57 @@ function ReportsView({ billingRuns, reportsByRunId, isLoading, error, onRefresh,
                     <th>Started by</th>
                     <th>Processed</th>
                     <th>Failed</th>
+                    <th>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {billingRuns.map((run) => (
-                    <tr key={run.id}>
-                      <td className="document-number">{run.id}</td>
-                      <td>
-                        {run.periodStart} to {run.periodEnd}
-                      </td>
-                      <td><span className={`status-chip status-${String(run.status || '').toLowerCase()}`}>{run.status}</span></td>
-                      <td>{run.startedBy || '—'}</td>
-                      <td>{formatNumber(run.processedRecords || 0)}</td>
-                      <td>{formatNumber(run.failedRecords || 0)}</td>
-                    </tr>
-                  ))}
+                  {billingRuns.map((run) => {
+                    const status = String(run.status || '')
+                    const actionKey = (action) => `${run.id}:${action}`
+                    return (
+                      <tr key={run.id}>
+                        <td className="document-number">{run.id}</td>
+                        <td>
+                          {run.periodStart} to {run.periodEnd}
+                        </td>
+                        <td><span className={`status-chip status-${status.toLowerCase()}`}>{run.status}</span></td>
+                        <td>{run.startedBy || '—'}</td>
+                        <td>{formatNumber(run.processedRecords || 0)}</td>
+                        <td>{formatNumber(run.failedRecords || 0)}</td>
+                        <td>
+                          <div className="row-actions billing-run-row-actions">
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              type="button"
+                              onClick={() => onRunAction(run, 'stop')}
+                              disabled={actionInProgress === actionKey('stop') || status === 'COMPLETED' || status === 'FAILED' || status === 'PAUSED'}
+                            >
+                              {actionInProgress === actionKey('stop') ? 'Stopping' : 'Stop'}
+                            </Button>
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              type="button"
+                              onClick={() => onRunAction(run, 'resume')}
+                              disabled={actionInProgress === actionKey('resume') || status !== 'PAUSED'}
+                            >
+                              {actionInProgress === actionKey('resume') ? 'Resuming' : 'Resume'}
+                            </Button>
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              type="button"
+                              onClick={() => onRunAction(run, 'restart')}
+                              disabled={actionInProgress === actionKey('restart')}
+                            >
+                              {actionInProgress === actionKey('restart') ? 'Restarting' : 'Restart'}
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>

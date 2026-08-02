@@ -56,7 +56,7 @@ function LoginScreen({ error, isLoading, theme, onLogin, onToggleTheme }) {
         <ErrorAlert error={error} />
 
         <div className="login-footer">
-          <span>JWT protected workspace</span>
+          <span>JWT protected invoices</span>
           <button type="button" className="text-button" onClick={onToggleTheme}>
             {theme === 'dark' ? 'Light theme' : 'Dark theme'}
           </button>
