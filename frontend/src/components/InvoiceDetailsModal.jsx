@@ -41,7 +41,9 @@ function InvoiceDetailsModal({ invoice, selectedPeriod, isLoading, onClose, onDo
             <SummaryItem label="Issue date" value={formatDateTime(invoice.documentDate)} />
             <SummaryItem label="Billing period" value={formatPeriod(invoice, selectedPeriod)} />
             <SummaryItem label="Lines" value={invoice.lines?.length ?? 0} />
-            <SummaryItem label="Total amount" value={formatMoney(invoice.totalAmount)} accent />
+            <SummaryItem label="Net total" value={formatMoney(invoice.totalAmount)} />
+            <SummaryItem label="VAT" value={formatVatSummary(invoice.vat)} />
+            <SummaryItem label="Total with VAT" value={formatMoney(invoice.totalAmountWithVat)} accent />
           </div>
 
           <div className="modal-actions">
@@ -64,8 +66,10 @@ function InvoiceDetailsModal({ invoice, selectedPeriod, isLoading, onClose, onDo
                     <th>#</th>
                     <th>Product</th>
                     <th>Quantity</th>
+                    <th>Unit</th>
                     <th>Price</th>
                     <th>Amount</th>
+                    <th>Applies to</th>
                     <th>Line start</th>
                     <th>Line end</th>
                     <th>Price list</th>
@@ -79,10 +83,12 @@ function InvoiceDetailsModal({ invoice, selectedPeriod, isLoading, onClose, onDo
                         <span className="product-pill">{String(line.product).toUpperCase()}</span>
                       </td>
                       <td>{formatQuantity(line.quantity)}</td>
+                      <td>{line.unit || '—'}</td>
                       <td>{formatMoney(line.price)}</td>
                       <td className="amount-cell">{formatMoney(line.amount)}</td>
-                      <td>{formatDateTime(line.lineStart)}</td>
-                      <td>{formatDateTime(line.lineEnd)}</td>
+                      <td>{formatReferencedLines(line.lines)}</td>
+                      <td>{formatDateTime(line.start)}</td>
+                      <td>{formatDateTime(line.end)}</td>
                       <td>{line.priceList}</td>
                     </tr>
                   ))}
@@ -94,6 +100,17 @@ function InvoiceDetailsModal({ invoice, selectedPeriod, isLoading, onClose, onDo
       )}
     </Drawer>
   )
+}
+
+function formatVatSummary(vat = []) {
+  if (!vat.length) {
+    return '—'
+  }
+  return vat.map((entry) => `${formatMoney(entry.amount)} (${formatQuantity(entry.percentage)}%)`).join(', ')
+}
+
+function formatReferencedLines(lines = []) {
+  return lines.length ? lines.join(', ') : '—'
 }
 
 function SummaryItem({ label, value, accent = false }) {

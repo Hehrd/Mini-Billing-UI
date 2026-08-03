@@ -178,7 +178,7 @@ function InvoiceTable({
                   <th>Status</th>
                   <th>Billing period</th>
                   <SortableHeader label="Lines" column="linesCount" sort={sort} onSort={updateSort} />
-                  <SortableHeader label="Total amount" column="totalAmount" sort={sort} onSort={updateSort} />
+                  <SortableHeader label="Total with VAT" column="totalAmountWithVat" sort={sort} onSort={updateSort} />
                   <th>Actions</th>
                 </tr>
               </thead>
@@ -220,7 +220,7 @@ function InvoiceTable({
                     </td>
                     <td>{selectedPeriod}</td>
                     <td>{invoice.linesCount ?? '—'}</td>
-                    <td className="amount-cell">{formatMoney(invoice.totalAmount)}</td>
+                    <td className="amount-cell">{formatMoney(invoice.totalAmountWithVat ?? invoice.totalAmount)}</td>
                     <td>
                       <div className="row-actions">
                         <Button variant="ghost" size="sm" type="button" onClick={() => onView(invoice.documentNumber)}>
@@ -344,7 +344,7 @@ function compareInvoices(left, right, sort) {
   const leftValue = left[sort.key]
   const rightValue = right[sort.key]
 
-  if (sort.key === 'totalAmount' || sort.key === 'linesCount') {
+  if (sort.key === 'totalAmount' || sort.key === 'totalAmountWithVat' || sort.key === 'linesCount') {
     return (Number(leftValue || 0) - Number(rightValue || 0)) * multiplier
   }
 

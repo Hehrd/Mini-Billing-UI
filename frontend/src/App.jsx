@@ -312,7 +312,7 @@ function App() {
   }, [visibleActiveView, auth, auth?.role, loadLogs, loadReadings, loadReports])
 
   const stats = useMemo(() => {
-    const totalAmount = invoices.reduce((sum, invoice) => sum + Number(invoice.totalAmount || 0), 0)
+    const totalAmount = invoices.reduce((sum, invoice) => sum + Number(invoice.totalAmountWithVat ?? invoice.totalAmount ?? 0), 0)
     const totalLines = invoices.reduce((sum, invoice) => sum + Number(invoice.linesCount ?? invoice.lines?.length ?? 0), 0)
     const lastDocumentNumber =
       invoices
